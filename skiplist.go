@@ -56,7 +56,7 @@ func (sl *SkipList[V]) Insert(key []byte, value V) {
 	}
 
 	// Determine the level of the new node.
-	for i := 0; i < sl.maxLevel; i++ {
+	for i := 0; i < sl.maxLevel-1; i++ {
 		if sl.rand.Intn(2) == 0 {
 			node.level++
 		} else {
