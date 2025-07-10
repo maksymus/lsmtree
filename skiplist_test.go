@@ -38,6 +38,8 @@ func TestSkipList_InsertAndGet(t *testing.T) {
 	list := NewSkipList[int](5, rand.New(rand.NewSource(time.Now().Unix())))
 	list.Insert([]byte("key1"), 1)
 	list.Insert([]byte("key2"), 2)
+	list.Insert([]byte("key5"), 5)
+	list.Insert([]byte("key3"), 3)
 
 	tests := []struct {
 		key   []byte
@@ -46,7 +48,9 @@ func TestSkipList_InsertAndGet(t *testing.T) {
 	}{
 		{[]byte("key1"), 1, true},
 		{[]byte("key2"), 2, true},
-		{[]byte("key3"), 0, false}, // Non-existing key
+		{[]byte("key5"), 5, true},
+		{[]byte("key3"), 3, true},
+		{[]byte("key10"), 0, false}, // Non-existing key
 	}
 
 	for _, tt := range tests {
