@@ -33,6 +33,8 @@ type SkipListNode[V any] struct {
 	forward []*SkipListNode[V]
 	// level is the level of the node in the skip list.
 	level int
+	// tombstone indicates whether the node is a tombstone (deleted).
+	tombstone bool
 }
 
 // NewSkipList creates a new skip list with the specified maximum level and random number generator.
@@ -117,4 +119,33 @@ func (sl *SkipList[V]) Delete(key []byte) bool {
 		return true
 	}
 	return false
+}
+
+// Update modifies the value associated with the given key in the skip list.
+func (sl *SkipList[V]) Update(key []byte, value V) bool {
+	current := sl.head
+	found := false
+
+	for i := sl.currentLevel; i >= 0; i-- {
+		for current.forward[i] != nil && bytes.Compare(current.forward[i].key, key) < 0 {
+			current = current.forward[i]
+		}
+		if current.forward[i] != nil && bytes.Equal(current.forward[i].key, key) {
+			current.forward[i].value = value
+			found = true
+		}
+	}
+
+	return found
+}
+
+// All returns all values in the skip list as a slice.
+func (sl *SkipList[V]) All() []V {
+	values := make([]V, 0, sl.length)
+	current := sl.head.forward[0]
+	for current != nil {
+		values = append(values, current.value)
+		current = current.forward[0]
+	}
+	return values
 }

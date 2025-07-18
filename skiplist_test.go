@@ -104,3 +104,48 @@ func TestSkipList_InsertDelete(t *testing.T) {
 		t.Errorf("Expected key 'key1' to be deleted, but found with value %d", value)
 	}
 }
+
+func TestSkipList_Update(t *testing.T) {
+	list := NewSkipList[int](5, rand.New(rand.NewSource(time.Now().Unix())))
+	list.Insert([]byte("key1"), 1)
+	list.Insert([]byte("key2"), 2)
+
+	// Update key1
+	found := list.Update([]byte("key1"), 10)
+	if !found {
+		t.Errorf("Expected to update key 'key1', but it was not found")
+	}
+
+	notFound := list.Update([]byte("key3"), 3)
+	if notFound {
+		t.Errorf("Expected to not find key 'key3' for update, but it was found")
+	}
+
+	value, found := list.Get([]byte("key1"))
+	if !found || value != 10 {
+		t.Errorf("Expected to find key 'key1' with updated value 10, got (%d, %v)", value, found)
+	}
+
+	value, found = list.Get([]byte("key2"))
+	if !found || value != 2 {
+		t.Errorf("Expected to find key 'key2' with value 2, got (%d, %v)", value, found)
+	}
+}
+
+func TestSkipList_All(t *testing.T) {
+	list := NewSkipList[int](5, rand.New(rand.NewSource(time.Now().Unix())))
+	list.Insert([]byte("key1"), 1)
+	list.Insert([]byte("key2"), 2)
+	list.Insert([]byte("key3"), 3)
+
+	// Check all keys
+	keys := [][]byte{[]byte("key1"), []byte("key2"), []byte("key3")}
+	for _, key := range keys {
+		value, found := list.Get(key)
+		if !found {
+			t.Errorf("Expected to find key %s, but it was not found", key)
+		} else {
+			fmt.Printf("Found key %s with value %d\n", key, value)
+		}
+	}
+}
