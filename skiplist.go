@@ -11,30 +11,18 @@ import (
 // The top level has the fewest elements, and each subsequent level has more elements.
 // The skip list uses randomization to determine the level of each new node, allowing for efficient traversal.
 type SkipList[V any] struct {
-	// head is the top-level header node of the skip list.
-	head *SkipListNode[V]
-	// maxLevel is the maximum level of the skip list.
-	maxLevel int
-	// currentLevel is the current level of the skip list.
-	currentLevel int
-	// length is the number of elements in the skip list.
-	length int
-	// rand is a random number generator used to determine the level of new nodes.
-	rand *rand.Rand
+	head         *SkipListNode[V] // head is the top-level header node of the skip list.
+	maxLevel     int              // maxLevel is the maximum level of the skip list.
+	currentLevel int              // currentLevel is the current level of the skip list.
+	length       int              // length is the number of elements in the skip list.
+	rand         *rand.Rand       // rand is a random number generator used to determine the level of new nodes.
 }
 
 // SkipListNode represents a node in the skip list.
 type SkipListNode[V any] struct {
-	// key is the key of the node.
-	key []byte
-	// value is the value of the node.
-	value V
-	// forward is an array of pointers to the next nodes at each level.
-	forward []*SkipListNode[V]
-	// level is the level of the node in the skip list.
-	level int
-	// tombstone indicates whether the node is a tombstone (deleted).
-	tombstone bool
+	Entry[V]
+	forward []*SkipListNode[V] // forward is an array of pointers to the next nodes at each level.
+	level   int                // level is the level of the node in the skip list.
 }
 
 // NewSkipList creates a new skip list with the specified maximum level and random number generator.
@@ -51,8 +39,10 @@ func NewSkipList[V any](maxLevel int, rand *rand.Rand) *SkipList[V] {
 // Insert adds a new key-value pair to the skip list.
 func (sl *SkipList[V]) Insert(key []byte, value V) {
 	node := &SkipListNode[V]{
-		key:     key,
-		value:   value,
+		Entry: Entry[V]{
+			key:   key,
+			value: value,
+		},
 		forward: make([]*SkipListNode[V], sl.maxLevel),
 		level:   0,
 	}
