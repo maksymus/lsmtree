@@ -89,7 +89,7 @@ func Open(dir, version string) (*WAL, error) {
 	}, nil
 }
 
-func (w *WAL) Write(entries ...*Entry[any]) error {
+func (w *WAL) Write(entries ...*Entry) error {
 	w.mutex.Lock()
 	defer w.mutex.Unlock()
 
@@ -108,20 +108,20 @@ func (w *WAL) Write(entries ...*Entry[any]) error {
 	return nil
 }
 
-func Read(w *WAL) ([]*Entry[any], error) {
+func Read(w *WAL) ([]*Entry, error) {
 	w.mutex.Lock()
 	defer w.mutex.Unlock()
 
 	//TODO unmarshall the entries from bytes.Buffer
-	var entries []*Entry[any]
-	var key, value string
-	for {
-		// Read each entry from the WAL file.
-		if _, err := fmt.Fscanf(w.file, "%s\t%s\n", &key, &value); err != nil {
-			break // EOF or error
-		}
-		entries = append(entries, &Entry[any]{key: []byte(key), value: value})
-	}
+	var entries []*Entry
+	//var key, value string
+	//for {
+	//	// Read each entry from the WAL file.
+	//	if _, err := fmt.Fscanf(w.file, "%s\t%s\n", &key, &value); err != nil {
+	//		break // EOF or error
+	//	}
+	//	entries = append(entries, &Entry{key: []byte(key), value: value})
+	//}
 
 	return entries, nil
 }

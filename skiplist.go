@@ -10,25 +10,25 @@ import (
 // A skip list consists of multiple levels of linked lists, where each level is a subset of the elements in the lower level.
 // The top level has the fewest elements, and each subsequent level has more elements.
 // The skip list uses randomization to determine the level of each new node, allowing for efficient traversal.
-type SkipList[V any] struct {
-	head         *SkipListNode[V] // head is the top-level header node of the skip list.
-	maxLevel     int              // maxLevel is the maximum level of the skip list.
-	currentLevel int              // currentLevel is the current level of the skip list.
-	length       int              // length is the number of elements in the skip list.
-	rand         *rand.Rand       // rand is a random number generator used to determine the level of new nodes.
+type SkipList struct {
+	head         *SkipListNode // head is the top-level header node of the skip list.
+	maxLevel     int           // maxLevel is the maximum level of the skip list.
+	currentLevel int           // currentLevel is the current level of the skip list.
+	length       int           // length is the number of elements in the skip list.
+	rand         *rand.Rand    // rand is a random number generator used to determine the level of new nodes.
 }
 
 // SkipListNode represents a node in the skip list.
-type SkipListNode[V any] struct {
-	Entry[V]
-	forward []*SkipListNode[V] // forward is an array of pointers to the next nodes at each level.
-	level   int                // level is the level of the node in the skip list.
+type SkipListNode struct {
+	Entry
+	forward []*SkipListNode // forward is an array of pointers to the next nodes at each level.
+	level   int             // level is the level of the node in the skip list.
 }
 
 // NewSkipList creates a new skip list with the specified maximum level and random number generator.
-func NewSkipList[V any](maxLevel int, rand *rand.Rand) *SkipList[V] {
-	return &SkipList[V]{
-		head:         &SkipListNode[V]{forward: make([]*SkipListNode[V], maxLevel)},
+func NewSkipList(maxLevel int, rand *rand.Rand) *SkipList {
+	return &SkipList{
+		head:         &SkipListNode{forward: make([]*SkipListNode, maxLevel)},
 		maxLevel:     maxLevel,
 		currentLevel: 0,
 		length:       0,
@@ -37,13 +37,13 @@ func NewSkipList[V any](maxLevel int, rand *rand.Rand) *SkipList[V] {
 }
 
 // Insert adds a new key-value pair to the skip list.
-func (sl *SkipList[V]) Insert(key []byte, value V) {
-	node := &SkipListNode[V]{
-		Entry: Entry[V]{
+func (sl *SkipList) Insert(key []byte, value []byte) {
+	node := &SkipListNode{
+		Entry: Entry{
 			key:   key,
 			value: value,
 		},
-		forward: make([]*SkipListNode[V], sl.maxLevel),
+		forward: make([]*SkipListNode, sl.maxLevel),
 		level:   0,
 	}
 
@@ -75,7 +75,7 @@ func (sl *SkipList[V]) Insert(key []byte, value V) {
 }
 
 // Get retrieves the value associated with the given key in the skip list.
-func (sl *SkipList[V]) Get(key []byte) (V, bool) {
+func (sl *SkipList) Get(key []byte) ([]byte, bool) {
 	current := sl.head
 	for i := sl.currentLevel; i >= 0; i-- {
 		for current.forward[i] != nil && bytes.Compare(current.forward[i].key, key) < 0 {
@@ -85,12 +85,12 @@ func (sl *SkipList[V]) Get(key []byte) (V, bool) {
 			return current.forward[i].value, true
 		}
 	}
-	var zeroValue V
+	var zeroValue []byte
 	return zeroValue, false
 }
 
 // Delete removes the key-value pair associated with the given key from the skip list.
-func (sl *SkipList[V]) Delete(key []byte) bool {
+func (sl *SkipList) Delete(key []byte) bool {
 	current := sl.head
 	found := false
 
@@ -112,7 +112,7 @@ func (sl *SkipList[V]) Delete(key []byte) bool {
 }
 
 // Update modifies the value associated with the given key in the skip list.
-func (sl *SkipList[V]) Update(key []byte, value V) bool {
+func (sl *SkipList) Update(key []byte, value []byte) bool {
 	current := sl.head
 	found := false
 
@@ -130,8 +130,8 @@ func (sl *SkipList[V]) Update(key []byte, value V) bool {
 }
 
 // All returns all values in the skip list as a slice.
-func (sl *SkipList[V]) All() []V {
-	values := make([]V, 0, sl.length)
+func (sl *SkipList) All() [][]byte {
+	values := make([][]byte, 0, sl.length)
 	current := sl.head.forward[0]
 	for current != nil {
 		values = append(values, current.value)
