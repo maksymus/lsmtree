@@ -2,17 +2,27 @@ package main
 
 import (
 	"bytes"
+	"encoding/binary"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"sync"
 )
+
+type WalFile interface {
+	io.Reader
+	io.Writer
+	io.Seeker
+	io.Closer
+}
 
 // WAL represents a Write-Ahead Log (WAL) for the LSM tree.
 // It is used to log changes before they are applied to the LSM tree.
 // The WAL is stored in a file and is used to recover the state of the LSM tree in case of a crash.
 type WAL struct {
 	mutex   sync.Mutex // Mutex to ensure thread-safe access to the WAL file.
-	file    *os.File   // File handle for the WAL file.
+	file    WalFile    // File handle for the WAL file.
 	dir     string     // Directory where the WAL file is stored.
 	path    string     // Path to the WAL file.
 	version string     // Version of the WAL file, used to differentiate between different versions of the WAL.
@@ -44,6 +54,12 @@ func (p *BytesBufferPool) Put(buf *bytes.Buffer) {
 	// This helps reduce memory allocations and improve performance.
 	buf.Reset() // Reset the buffer before putting it back in the pool.
 	p.pool.Put(buf)
+}
+
+func WalExists(dir, version string) bool {
+	path := fmt.Sprintf("%s/wal-%s.log", dir, version)
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 func Create(dir, version string) (*WAL, error) {
@@ -93,14 +109,48 @@ func (w *WAL) Write(entries ...*Entry) error {
 	w.mutex.Lock()
 	defer w.mutex.Unlock()
 
-	// TODO marshall the entries to bytes.Buffer
 	if w.file == nil {
 		return fmt.Errorf("WAL file is not open")
 	}
 
+	// Validate entries
+	for i, entry := range entries {
+		if entry == nil {
+			return fmt.Errorf("entry at index %d is nil", i)
+		}
+		if len(entry.Key) == 0 {
+			return fmt.Errorf("entry at index %d has empty Key", i)
+		}
+		if len(entry.Value) == 0 {
+			return fmt.Errorf("entry at index %d has empty Value", i)
+		}
+	}
+
+	buffer := w.pool.Get()
+	defer w.pool.Put(buffer)
+
 	for _, entry := range entries {
-		// Write the entry to the WAL file.
-		if _, err := w.file.WriteString(fmt.Sprintf("%s\t%s\n", string(entry.key), entry.value)); err != nil {
+		keyLen, dataLen := len(entry.Key), len(entry.Value)
+		if err := errors.Join(
+			binary.Write(buffer, binary.BigEndian, uint32(keyLen)),  // Key length
+			binary.Write(buffer, binary.BigEndian, uint32(dataLen)), // Value length
+			binary.Write(buffer, binary.BigEndian, entry.Key),       // Key
+			binary.Write(buffer, binary.BigEndian, entry.Value),     // Value
+			binary.Write(buffer, binary.BigEndian, entry.Tombstone), // Tombstone (deletion marker if any)
+		); err != nil {
+			return err
+		}
+
+		if buffer.Len() > 5*1024*1024 { // flush if buffer is larger than 5MB
+			if _, err := w.file.Write(buffer.Bytes()); err != nil {
+				return err
+			}
+			buffer.Reset()
+		}
+	}
+
+	if buffer.Len() > 0 {
+		if _, err := w.file.Write(buffer.Bytes()); err != nil {
 			return err
 		}
 	}
@@ -112,16 +162,49 @@ func Read(w *WAL) ([]*Entry, error) {
 	w.mutex.Lock()
 	defer w.mutex.Unlock()
 
-	//TODO unmarshall the entries from bytes.Buffer
+	if w.file == nil {
+		return nil, fmt.Errorf("WAL file is not open")
+	}
+
+	if _, err := w.file.Seek(0, io.SeekStart); err != nil {
+		return nil, err
+	}
+
+	buffer := w.pool.Get()
+	defer w.pool.Put(buffer)
+
+	if _, err := buffer.ReadFrom(w.file); err != nil {
+		return nil, err
+	}
+
 	var entries []*Entry
-	//var key, value string
-	//for {
-	//	// Read each entry from the WAL file.
-	//	if _, err := fmt.Fscanf(w.file, "%s\t%s\n", &key, &value); err != nil {
-	//		break // EOF or error
-	//	}
-	//	entries = append(entries, &Entry{key: []byte(key), value: value})
-	//}
+	reader := bytes.NewReader(buffer.Bytes())
+	for {
+		var keyLen uint32
+		var dataLen uint32
+		if err := errors.Join(
+			binary.Read(reader, binary.BigEndian, &keyLen),
+			binary.Read(reader, binary.BigEndian, &dataLen),
+		); err != nil {
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			return nil, err
+		}
+
+		key := make([]byte, keyLen)
+		value := make([]byte, dataLen)
+		var tombstone uint8
+		if err := errors.Join(
+			binary.Read(reader, binary.BigEndian, &key),
+			binary.Read(reader, binary.BigEndian, &value),
+			binary.Read(reader, binary.BigEndian, &tombstone),
+		); err != nil {
+			return nil, err
+		}
+
+		entries = append(entries, &Entry{Key: key, Value: value, Tombstone: tombstone != 0})
+	}
 
 	return entries, nil
 }

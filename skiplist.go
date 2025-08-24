@@ -36,12 +36,12 @@ func NewSkipList(maxLevel int, rand *rand.Rand) *SkipList {
 	}
 }
 
-// Insert adds a new key-value pair to the skip list.
+// Insert adds a new Key-Value pair to the skip list.
 func (sl *SkipList) Insert(key []byte, value []byte) {
 	node := &SkipListNode{
 		Entry: Entry{
-			key:   key,
-			value: value,
+			Key:   key,
+			Value: value,
 		},
 		forward: make([]*SkipListNode, sl.maxLevel),
 		level:   0,
@@ -62,7 +62,7 @@ func (sl *SkipList) Insert(key []byte, value []byte) {
 
 	current := sl.head
 	for i := sl.currentLevel; i >= 0; i-- {
-		for current.forward[i] != nil && bytes.Compare(current.forward[i].key, key) < 0 {
+		for current.forward[i] != nil && bytes.Compare(current.forward[i].Key, key) < 0 {
 			current = current.forward[i]
 		}
 		if i <= node.level {
@@ -74,31 +74,31 @@ func (sl *SkipList) Insert(key []byte, value []byte) {
 	sl.length++
 }
 
-// Get retrieves the value associated with the given key in the skip list.
+// Get retrieves the Value associated with the given Key in the skip list.
 func (sl *SkipList) Get(key []byte) ([]byte, bool) {
 	current := sl.head
 	for i := sl.currentLevel; i >= 0; i-- {
-		for current.forward[i] != nil && bytes.Compare(current.forward[i].key, key) < 0 {
+		for current.forward[i] != nil && bytes.Compare(current.forward[i].Key, key) < 0 {
 			current = current.forward[i]
 		}
-		if current.forward[i] != nil && bytes.Equal(current.forward[i].key, key) {
-			return current.forward[i].value, true
+		if current.forward[i] != nil && bytes.Equal(current.forward[i].Key, key) {
+			return current.forward[i].Value, true
 		}
 	}
 	var zeroValue []byte
 	return zeroValue, false
 }
 
-// Delete removes the key-value pair associated with the given key from the skip list.
+// Delete removes the Key-Value pair associated with the given Key from the skip list.
 func (sl *SkipList) Delete(key []byte) bool {
 	current := sl.head
 	found := false
 
 	for i := sl.currentLevel; i >= 0; i-- {
-		for current.forward[i] != nil && bytes.Compare(current.forward[i].key, key) < 0 {
+		for current.forward[i] != nil && bytes.Compare(current.forward[i].Key, key) < 0 {
 			current = current.forward[i]
 		}
-		if current.forward[i] != nil && bytes.Equal(current.forward[i].key, key) {
+		if current.forward[i] != nil && bytes.Equal(current.forward[i].Key, key) {
 			found = true
 			current.forward[i] = current.forward[i].forward[i]
 		}
@@ -111,17 +111,17 @@ func (sl *SkipList) Delete(key []byte) bool {
 	return false
 }
 
-// Update modifies the value associated with the given key in the skip list.
+// Update modifies the Value associated with the given Key in the skip list.
 func (sl *SkipList) Update(key []byte, value []byte) bool {
 	current := sl.head
 	found := false
 
 	for i := sl.currentLevel; i >= 0; i-- {
-		for current.forward[i] != nil && bytes.Compare(current.forward[i].key, key) < 0 {
+		for current.forward[i] != nil && bytes.Compare(current.forward[i].Key, key) < 0 {
 			current = current.forward[i]
 		}
-		if current.forward[i] != nil && bytes.Equal(current.forward[i].key, key) {
-			current.forward[i].value = value
+		if current.forward[i] != nil && bytes.Equal(current.forward[i].Key, key) {
+			current.forward[i].Value = value
 			found = true
 		}
 	}
@@ -134,7 +134,7 @@ func (sl *SkipList) All() [][]byte {
 	values := make([][]byte, 0, sl.length)
 	current := sl.head.forward[0]
 	for current != nil {
-		values = append(values, current.value)
+		values = append(values, current.Value)
 		current = current.forward[0]
 	}
 	return values
