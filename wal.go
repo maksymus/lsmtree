@@ -7,7 +7,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
 	"sync"
+	"time"
 )
 
 type WalFile interface {
@@ -56,17 +60,20 @@ func (p *BytesBufferPool) Put(buf *bytes.Buffer) {
 	p.pool.Put(buf)
 }
 
-func WalExists(dir, version string) bool {
-	path := fmt.Sprintf("%s/wal-%s.log", dir, version)
-	_, err := os.Stat(path)
-	return err == nil
-}
+//func WalExists(dir, version string) bool {
+//	path := fmt.Sprintf("%s/wal-%s.log", dir, version)
+//	_, err := os.Stat(path)
+//	return err == nil
+//}
 
-func Create(dir, version string) (*WAL, error) {
+func Create(dir string) (*WAL, error) {
 	// Create the WAL directory if it doesn't exist.
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return nil, err
 	}
+
+	createdAt := time.Now()
+	version := fmt.Sprintf("%s-%d", createdAt.Format("20060102150405"), createdAt.Nanosecond())
 
 	// Construct the path for the WAL file.
 	path := fmt.Sprintf("%s/wal-%s.log", dir, version)
@@ -86,22 +93,20 @@ func Create(dir, version string) (*WAL, error) {
 	}, nil
 }
 
-func Open(dir, version string) (*WAL, error) {
-	// Construct the path for the WAL file.
-	path := fmt.Sprintf("%s/wal-%s.log", dir, version)
+func Open(path string) (*WAL, error) {
 
 	// Open the WAL file for reading and writing.
-	file, err := os.OpenFile(path, os.O_RDWR, 0644)
+	walFile, err := os.OpenFile(path, os.O_RDWR, 0644)
 	if err != nil {
 		return nil, err
 	}
 
 	return &WAL{
-		file:    file,
-		dir:     dir,
-		path:    path,
-		version: version,
-		pool:    NewBytesBufferPool(),
+		file: walFile,
+		dir:  filepath.Dir(path),
+		path: path,
+		//version: version,
+		pool: NewBytesBufferPool(),
 	}, nil
 }
 
@@ -158,7 +163,7 @@ func (w *WAL) Write(entries ...*Entry) error {
 	return nil
 }
 
-func Read(w *WAL) ([]*Entry, error) {
+func (w *WAL) Read() ([]*Entry, error) {
 	w.mutex.Lock()
 	defer w.mutex.Unlock()
 
@@ -223,4 +228,47 @@ func (w *WAL) Close() error {
 
 	w.file = nil
 	return nil
+}
+
+func (w *WAL) Delete() error {
+	w.mutex.Lock()
+	defer w.mutex.Unlock()
+
+	if w.file != nil {
+		if err := w.file.Close(); err != nil {
+			return err
+		}
+		w.file = nil
+	}
+
+	if err := os.Remove(w.path); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (w *WAL) CompareVersion(version string) int {
+	walParts := strings.Split(w.version, "-")
+	parts := strings.Split(version, "-")
+
+	if len(walParts) != 2 || len(parts) != 2 {
+		return 0
+	}
+
+	if walParts[0] != parts[0] {
+		return strings.Compare(walParts[0], parts[0])
+	}
+
+	return strings.Compare(walParts[1], parts[1])
+}
+
+func VersionFromFileName(fileName string) (string, error) {
+	if match, err := regexp.MatchString(`^wal-\d+-\d+\.log$`, fileName); err != nil || !match {
+		return "", fmt.Errorf("invalid WAL file name: %s", fileName)
+	}
+
+	parts := strings.Split(strings.TrimSuffix(strings.TrimPrefix(fileName, "wal-"), ".log"), "-")
+
+	return fmt.Sprintf("%s-%s", parts[0], parts[1]), nil
 }

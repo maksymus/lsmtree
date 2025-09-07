@@ -5,6 +5,13 @@ import (
 	"math/rand"
 )
 
+// Entry represents a Key-Value pair in the LSM tree.
+type Entry struct {
+	Key       []byte // Key is the unique identifier for the entry.
+	Value     []byte // Value is the data associated with the Key.
+	Tombstone bool   // Tombstone indicates whether the entry is a Tombstone (deleted).
+}
+
 // SkipList represents a skip list data structure.
 // It is a probabilistic data structure that allows for fast search, insert, and delete operations.
 // A skip list consists of multiple levels of linked lists, where each level is a subset of the elements in the lower level.
@@ -138,4 +145,29 @@ func (sl *SkipList) All() [][]byte {
 		current = current.forward[0]
 	}
 	return values
+}
+
+// Reset clears the skip list, removing all elements and resetting its state.
+func (sl *SkipList) Reset() {
+	sl.head = &SkipListNode{forward: make([]*SkipListNode, sl.maxLevel)}
+	sl.currentLevel = 0
+	sl.length = 0
+}
+
+// LowerBound finds the smallest key in the skip list that is greater than or equal to the given key.
+func (sl *SkipList) LowerBound(key []byte) ([]byte, bool) {
+	current := sl.head
+	for i := sl.currentLevel; i >= 0; i-- {
+		for current.forward[i] != nil && bytes.Compare(current.forward[i].Key, key) < 0 {
+			current = current.forward[i]
+		}
+		if current.forward[i] != nil && bytes.Equal(current.forward[i].Key, key) {
+			return current.forward[i].Value, true
+		}
+	}
+	if current.forward[0] != nil {
+		return current.forward[0].Value, true
+	}
+	var zeroValue []byte
+	return zeroValue, false
 }
