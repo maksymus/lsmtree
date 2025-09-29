@@ -5,13 +5,6 @@ import (
 	"math/rand"
 )
 
-// Entry represents a Key-Value pair in the LSM tree.
-type Entry struct {
-	Key       []byte // Key is the unique identifier for the entry.
-	Value     []byte // Value is the data associated with the Key.
-	Tombstone bool   // Tombstone indicates whether the entry is a Tombstone (deleted).
-}
-
 // SkipList represents a skip list data structure.
 // It is a probabilistic data structure that allows for fast search, insert, and delete operations.
 // A skip list consists of multiple levels of linked lists, where each level is a subset of the elements in the lower level.
