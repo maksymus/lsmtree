@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"reflect"
 	"sync"
 )
 
@@ -12,29 +13,49 @@ type Entry struct {
 	Tombstone bool   // Tombstone indicates whether the entry is a Tombstone (deleted).
 }
 
-type BytesBufferPool struct {
-	pool sync.Pool // Pool for reusing bytes.Buffer objects to reduce memory allocations.
+type SyncPool[T any] struct {
+	pool      sync.Pool
+	resetFunc func(T)
 }
 
-func NewBytesBufferPool() *BytesBufferPool {
-	return &BytesBufferPool{
+type BytesBufferPool struct {
+	SyncPool[*bytes.Buffer]
+}
+
+func NewSyncPool[T any](newFunc func() T, resetFunc func(T)) *SyncPool[T] {
+	return &SyncPool[T]{
+		resetFunc: resetFunc,
 		pool: sync.Pool{
 			New: func() interface{} {
-				return new(bytes.Buffer)
+				return newFunc()
 			},
 		},
 	}
 }
 
-func (p *BytesBufferPool) Get() *bytes.Buffer {
-	buf := p.pool.Get().(*bytes.Buffer)
-	buf.Reset() // Reset the buffer to clear any previous data.
-	return buf
+func (p *SyncPool[T]) Get() T {
+	elem := p.pool.Get().(T)
+	if p.resetFunc != nil {
+		p.resetFunc(elem)
+	}
+	return elem
 }
 
-func (p *BytesBufferPool) Put(buf *bytes.Buffer) {
-	// Return the buffer to the pool for reuse.
-	// This helps reduce memory allocations and improve performance.
-	buf.Reset() // Reset the buffer before putting it back in the pool.
-	p.pool.Put(buf)
+func (p *SyncPool[T]) Put(item T) {
+	value := reflect.ValueOf(item)
+	if value.Kind() == reflect.Ptr && value.IsNil() {
+		return
+	}
+
+	p.pool.Put(item)
+}
+
+func NewBytesBufferPool() *BytesBufferPool {
+	return &BytesBufferPool{
+		SyncPool: *NewSyncPool(func() *bytes.Buffer {
+			return new(bytes.Buffer)
+		}, func(buf *bytes.Buffer) {
+			buf.Reset()
+		}),
+	}
 }
