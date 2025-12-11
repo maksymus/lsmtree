@@ -1,4 +1,4 @@
-package main
+package wal
 
 import (
 	"bytes"
@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/maksymus/lmstree/util"
 )
 
 type WalFile interface {
@@ -30,14 +32,8 @@ type WAL struct {
 	dir     string     // Directory where the WAL file is stored.
 	path    string     // Path to the WAL file.
 	version string     // Version of the WAL file, used to differentiate between different versions of the WAL.
-	pool    *BytesBufferPool
+	pool    *util.BytesBufferPool
 }
-
-//func WalExists(dir, version string) bool {
-//	path := fmt.Sprintf("%s/wal-%s.log", dir, version)
-//	_, err := os.Stat(path)
-//	return err == nil
-//}
 
 func Create(dir string) (*WAL, error) {
 	// Create the WAL directory if it doesn't exist.
@@ -62,7 +58,7 @@ func Create(dir string) (*WAL, error) {
 		dir:     dir,
 		path:    path,
 		version: version,
-		pool:    NewBytesBufferPool(),
+		pool:    util.NewBytesBufferPool(),
 	}, nil
 }
 
@@ -79,11 +75,11 @@ func Open(path string) (*WAL, error) {
 		dir:  filepath.Dir(path),
 		path: path,
 		//version: version,
-		pool: NewBytesBufferPool(),
+		pool: util.NewBytesBufferPool(),
 	}, nil
 }
 
-func (w *WAL) Write(entries ...*Entry) error {
+func (w *WAL) Write(entries ...*util.Entry) error {
 	w.mutex.Lock()
 	defer w.mutex.Unlock()
 
@@ -136,7 +132,7 @@ func (w *WAL) Write(entries ...*Entry) error {
 	return nil
 }
 
-func (w *WAL) Read() ([]*Entry, error) {
+func (w *WAL) Read() ([]*util.Entry, error) {
 	w.mutex.Lock()
 	defer w.mutex.Unlock()
 
@@ -155,7 +151,7 @@ func (w *WAL) Read() ([]*Entry, error) {
 		return nil, err
 	}
 
-	var entries []*Entry
+	var entries []*util.Entry
 	reader := bytes.NewReader(buffer.Bytes())
 	for {
 		var keyLen uint32
@@ -181,7 +177,7 @@ func (w *WAL) Read() ([]*Entry, error) {
 			return nil, err
 		}
 
-		entries = append(entries, &Entry{Key: key, Value: value, Tombstone: tombstone != 0})
+		entries = append(entries, &util.Entry{Key: key, Value: value, Tombstone: tombstone != 0})
 	}
 
 	return entries, nil

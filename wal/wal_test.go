@@ -1,8 +1,10 @@
-package main
+package wal
 
 import (
 	"bytes"
 	"testing"
+
+	"github.com/maksymus/lmstree/util"
 )
 
 type InMemoryWalFile struct {
@@ -36,7 +38,7 @@ func TestWAL_Write(t *testing.T) {
 		file WalFile
 	}
 	type args struct {
-		entries []*Entry
+		entries []*util.Entry
 	}
 	tests := []struct {
 		name    string
@@ -50,7 +52,7 @@ func TestWAL_Write(t *testing.T) {
 				file: NewInMemoryWalFile(),
 			},
 			args: args{
-				entries: []*Entry{
+				entries: []*util.Entry{
 					{Key: []byte("key1"), Value: []byte("value1")},
 				},
 			},
@@ -62,7 +64,7 @@ func TestWAL_Write(t *testing.T) {
 				file: NewInMemoryWalFile(),
 			},
 			args: args{
-				entries: []*Entry{
+				entries: []*util.Entry{
 					{Key: []byte("key1"), Value: []byte("value1")},
 					{Key: []byte("key2"), Value: []byte("value2")},
 					{Key: []byte("key3"), Value: []byte("value3")},
@@ -76,7 +78,7 @@ func TestWAL_Write(t *testing.T) {
 				file: NewInMemoryWalFile(),
 			},
 			args: args{
-				entries: []*Entry{},
+				entries: []*util.Entry{},
 			},
 			wantErr: false,
 		},
@@ -86,7 +88,7 @@ func TestWAL_Write(t *testing.T) {
 				file: NewInMemoryWalFile(),
 			},
 			args: args{
-				entries: []*Entry{nil},
+				entries: []*util.Entry{nil},
 			},
 			wantErr: true,
 		},
@@ -95,7 +97,7 @@ func TestWAL_Write(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			w := &WAL{
 				file: tt.fields.file,
-				pool: NewBytesBufferPool(),
+				pool: util.NewBytesBufferPool(),
 			}
 			if err := w.Write(tt.args.entries...); (err != nil) != tt.wantErr {
 				t.Errorf("Write() error = %v, wantErr %v", err, tt.wantErr)

@@ -1,8 +1,10 @@
-package main
+package lmstree
 
 import (
 	"fmt"
 	"time"
+
+	"github.com/maksymus/lmstree/wal"
 )
 
 func main() {
@@ -12,7 +14,7 @@ func main() {
 
 	fmt.Println("LSM Tree Version:", version)
 	fileName := "wal-" + version + ".log"
-	v, e := VersionFromFileName(fileName)
+	v, e := wal.VersionFromFileName(fileName)
 	fmt.Println("Extracted Version:", v, e)
 
 	//lsmTree := NewLSMTree()

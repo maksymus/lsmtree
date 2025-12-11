@@ -1,4 +1,4 @@
-package main
+package lmstree
 
 import (
 	"math/rand"
@@ -6,6 +6,9 @@ import (
 	"slices"
 	"sync"
 	"time"
+
+	"github.com/maksymus/lmstree/util"
+	wal "github.com/maksymus/lmstree/wal"
 )
 
 // MemTable represents an in-memory table with a skip list and a write-ahead log (WAL).
@@ -15,20 +18,20 @@ import (
 // and a WAL for durability and recovery in case of crashes.
 type MemTable struct {
 	mutex    sync.Mutex
-	list     *SkipList
-	wal      *WAL
+	list     *util.SkipList
+	wal      *wal.WAL
 	dir      string
 	readonly bool
 }
 
 // NewMemTable creates a new MemTable with the specified directory and skip list level.
 func NewMemTable(dir string, level int) (*MemTable, error) {
-	wal, err := Create(dir)
+	wal, err := wal.Create(dir)
 	if err != nil {
 		return nil, err
 	}
 
-	list := NewSkipList(level, rand.New(rand.NewSource(time.Now().Unix())))
+	list := util.NewSkipList(level, rand.New(rand.NewSource(time.Now().Unix())))
 
 	return &MemTable{
 		list: list,
@@ -46,7 +49,7 @@ func (m *MemTable) Set(key, value []byte) error {
 		return nil
 	}
 
-	entry := &Entry{
+	entry := &util.Entry{
 		Key:   key,
 		Value: value,
 	}
@@ -80,7 +83,7 @@ func (m *MemTable) Recover() error {
 	// Filter WAL files
 	var files []string
 	for _, file := range dirs {
-		if version, err := VersionFromFileName(file.Name()); err == nil {
+		if version, err := wal.VersionFromFileName(file.Name()); err == nil {
 			if !file.IsDir() && m.wal.CompareVersion(version) < 0 {
 				files = append(files, file.Name())
 			}
@@ -97,7 +100,7 @@ func (m *MemTable) Recover() error {
 
 	// Replay WAL files in order
 	for _, file := range files {
-		wal, err := Open(file)
+		wal, err := wal.Open(file)
 		if err != nil {
 			return err
 		}

@@ -1,4 +1,4 @@
-package main
+package lmstree
 
 // LSMTree is a simple implementation of a Log-Structured Merge Tree (LSM Tree).
 // It uses an in-memory table (memTable) and a list of SSTables (sorted string tables).
@@ -18,7 +18,7 @@ func NewLSMTree() *LSMTree {
 	}
 }
 
-func (t *LSMTree) Insert(key string, value any) {
+func (t *LSMTree) Put(key string, value any) {
 
 }
 

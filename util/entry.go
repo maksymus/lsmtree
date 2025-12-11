@@ -1,4 +1,4 @@
-package main
+package util
 
 import (
 	"bytes"
@@ -11,6 +11,10 @@ type Entry struct {
 	Key       []byte // Key is the unique identifier for the entry.
 	Value     []byte // Value is the data associated with the Key.
 	Tombstone bool   // Tombstone indicates whether the entry is a Tombstone (deleted).
+}
+
+func (entry Entry) Size() int {
+	return len(entry.Key) + len(entry.Value) + 1 // +1 for the Tombstone byte
 }
 
 type SyncPool[T any] struct {

@@ -1,9 +1,10 @@
-package main
+package util
 
 import (
-	"github.com/spaolacci/murmur3"
 	"hash"
 	"math"
+
+	"github.com/spaolacci/murmur3"
 )
 
 // BloomFilter is a probabilistic data structure that is used to test whether an element is a member of a set.
