@@ -1,6 +1,7 @@
 package sstable
 
 import (
+	"errors"
 	"time"
 
 	"github.com/maksymus/lmstree/util"
@@ -25,16 +26,16 @@ used in LSM trees to store sorted key-value pairs on disk.
 	+-------------------+
 */
 
-var pool = util.NewBytesBufferPool()
+var bytesBufPool = util.NewBytesBufferPool()
 
-type BlockHandle struct {
+type Block struct {
 	offset uint64
 	length uint64
 }
 
 func Build(entries []*util.Entry, blockSize int, level int) ([]byte, error) {
-	sstableBuffer := pool.Get()
-	defer pool.Put(sstableBuffer)
+	sstableBuffer := bytesBufPool.Get()
+	defer bytesBufPool.Put(sstableBuffer)
 
 	// Build Data Block
 	dataBlocks := make([]*DataBlock, 0)
@@ -65,7 +66,7 @@ func Build(entries []*util.Entry, blockSize int, level int) ([]byte, error) {
 			return nil, err
 		}
 
-		blockHandle := BlockHandle{
+		blockHandle := Block{
 			offset: offset,
 			length: uint64(len(dataBlockBytes)),
 		}
@@ -82,7 +83,9 @@ func Build(entries []*util.Entry, blockSize int, level int) ([]byte, error) {
 
 		offset += uint64(len(dataBlockBytes))
 
-		sstableBuffer.Write(dataBlockBytes)
+		if _, err := sstableBuffer.Write(dataBlockBytes); err != nil {
+			return nil, err
+		}
 	}
 
 	indexBlockBytes, err := indexBlock.Encode()
@@ -103,11 +106,11 @@ func Build(entries []*util.Entry, blockSize int, level int) ([]byte, error) {
 
 	// Build Footer Block
 	footer := &Footer{
-		meta: BlockHandle{
+		meta: Block{
 			offset: offset,
 			length: uint64(len(metaBlockBytes)),
 		},
-		index: BlockHandle{
+		index: Block{
 			offset: offset + uint64(len(metaBlockBytes)),
 			length: uint64(len(indexBlockBytes)),
 		},
@@ -119,9 +122,13 @@ func Build(entries []*util.Entry, blockSize int, level int) ([]byte, error) {
 	}
 
 	// Assemble SSTable
-	sstableBuffer.Write(metaBlockBytes)
-	sstableBuffer.Write(indexBlockBytes)
-	sstableBuffer.Write(footerBytes)
+	_, err1 := sstableBuffer.Write(metaBlockBytes)
+	_, err2 := sstableBuffer.Write(indexBlockBytes)
+	_, err3 := sstableBuffer.Write(footerBytes)
+
+	if err := errors.Join(err1, err2, err3); err != nil {
+		return nil, err
+	}
 
 	return sstableBuffer.Bytes(), nil
 }

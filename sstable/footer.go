@@ -7,13 +7,13 @@ import (
 )
 
 type Footer struct {
-	meta  BlockHandle
-	index BlockHandle
+	meta  Block
+	index Block
 }
 
 func (f *Footer) Encode() ([]byte, error) {
-	buffer := pool.Get()
-	defer pool.Put(buffer)
+	buffer := bytesBufPool.Get()
+	defer bytesBufPool.Put(buffer)
 
 	if err := errors.Join(
 		binary.Write(buffer, binary.BigEndian, f.meta.offset),  // Meta block offset
@@ -27,9 +27,6 @@ func (f *Footer) Encode() ([]byte, error) {
 }
 
 func (f *Footer) Decode(data []byte) error {
-	buffer := pool.Get()
-	defer pool.Put(buffer)
-
 	reader := bytes.NewReader(data)
 
 	if err := errors.Join(

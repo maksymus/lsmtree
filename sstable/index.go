@@ -9,21 +9,25 @@ import (
 
 type IndexBlock struct {
 	entries []*IndexEntry
-	block   BlockHandle
+	block   Block
 }
 
 // IndexEntry represents an entry in the index block, mapping a key range to a data block.
 type IndexEntry struct {
 	startKey []byte
 	endKey   []byte
-	block    BlockHandle
+	block    Block
 }
 
 func (ib *IndexBlock) Encode() ([]byte, error) {
-	buffer := pool.Get()
-	defer pool.Put(buffer)
+	buffer := bytesBufPool.Get()
+	defer bytesBufPool.Put(buffer)
 
 	for _, entry := range ib.entries {
+		if entry == nil {
+			continue
+		}
+
 		if err := errors.Join(
 			binary.Write(buffer, binary.BigEndian, uint32(len(entry.startKey))), // Start key length
 			binary.Write(buffer, binary.BigEndian, uint32(len(entry.endKey))),   // End key length
@@ -39,9 +43,6 @@ func (ib *IndexBlock) Encode() ([]byte, error) {
 }
 
 func (ib *IndexBlock) Decode(data []byte) error {
-	buffer := pool.Get()
-	defer pool.Put(buffer)
-
 	reader := bytes.NewReader(data)
 
 	for {
@@ -73,7 +74,7 @@ func (ib *IndexBlock) Decode(data []byte) error {
 		entry := &IndexEntry{
 			startKey: startKey,
 			endKey:   endKey,
-			block: BlockHandle{
+			block: Block{
 				offset: blockOffset,
 				length: blockLength,
 			},
@@ -83,7 +84,7 @@ func (ib *IndexBlock) Decode(data []byte) error {
 	return nil
 }
 
-func (ib *IndexBlock) Search(key []byte) (BlockHandle, bool) {
+func (ib *IndexBlock) Search(key []byte) (Block, bool) {
 	start, end := 0, len(ib.entries)-1
 	for start <= end {
 		mid := (start + end) / 2
@@ -95,5 +96,5 @@ func (ib *IndexBlock) Search(key []byte) (BlockHandle, bool) {
 			end = mid - 1
 		}
 	}
-	return BlockHandle{}, false
+	return Block{}, false
 }

@@ -13,8 +13,8 @@ type MetaBlock struct {
 }
 
 func (mb *MetaBlock) Encode() ([]byte, error) {
-	buffer := pool.Get()
-	defer pool.Put(buffer)
+	buffer := bytesBufPool.Get()
+	defer bytesBufPool.Put(buffer)
 
 	if err := errors.Join(
 		binary.Write(buffer, binary.BigEndian, mb.createdAt),    // Creation timestamp
@@ -26,9 +26,6 @@ func (mb *MetaBlock) Encode() ([]byte, error) {
 }
 
 func (mb *MetaBlock) Decode(data []byte) error {
-	buffer := pool.Get()
-	defer pool.Put(buffer)
-
 	reader := bytes.NewReader(data)
 
 	var level int32

@@ -13,12 +13,12 @@ func TestIndexBlock_EncodeDecode(t *testing.T) {
 			{
 				startKey: []byte("a"),
 				endKey:   []byte("b"),
-				block:    BlockHandle{offset: 0, length: 100},
+				block:    Block{offset: 0, length: 100},
 			},
 			{
 				startKey: []byte("c"),
 				endKey:   []byte("d"),
-				block:    BlockHandle{offset: 100, length: 200},
+				block:    Block{offset: 100, length: 200},
 			},
 		},
 	}
@@ -49,8 +49,8 @@ func TestIndexBlock_EncodeDecode(t *testing.T) {
 
 func TestFooter_EncodeDecode(t *testing.T) {
 	original := &Footer{
-		meta:  BlockHandle{offset: 0, length: 256},
-		index: BlockHandle{offset: 256, length: 512},
+		meta:  Block{offset: 0, length: 256},
+		index: Block{offset: 256, length: 512},
 	}
 
 	data, err := original.Encode()
@@ -163,19 +163,19 @@ func TestDataBlock_Search(t *testing.T) {
 func TestIndexBlock_Search(t *testing.T) {
 	ib := &IndexBlock{
 		entries: []*IndexEntry{
-			{startKey: []byte("a"), endKey: []byte("c"), block: BlockHandle{offset: 0, length: 100}},
-			{startKey: []byte("d"), endKey: []byte("f"), block: BlockHandle{offset: 100, length: 200}},
+			{startKey: []byte("a"), endKey: []byte("c"), block: Block{offset: 0, length: 100}},
+			{startKey: []byte("d"), endKey: []byte("f"), block: Block{offset: 100, length: 200}},
 		},
 	}
 
 	tests := []struct {
 		key      []byte
-		expected BlockHandle
+		expected Block
 		found    bool
 	}{
-		{key: []byte("b"), expected: BlockHandle{offset: 0, length: 100}, found: true},
-		{key: []byte("e"), expected: BlockHandle{offset: 100, length: 200}, found: true},
-		{key: []byte("g"), expected: BlockHandle{}, found: false},
+		{key: []byte("b"), expected: Block{offset: 0, length: 100}, found: true},
+		{key: []byte("e"), expected: Block{offset: 100, length: 200}, found: true},
+		{key: []byte("g"), expected: Block{}, found: false},
 	}
 	for _, tt := range tests {
 		block, found := ib.Search(tt.key)

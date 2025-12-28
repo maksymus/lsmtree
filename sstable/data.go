@@ -16,10 +16,14 @@ type DataBlock struct {
 }
 
 func (db *DataBlock) Encode() ([]byte, error) {
-	buffer := pool.Get()
-	defer pool.Put(buffer)
+	buffer := bytesBufPool.Get()
+	defer bytesBufPool.Put(buffer)
 
 	for _, entry := range db.entries {
+		if entry == nil {
+			continue
+		}
+
 		if err := errors.Join(
 			binary.Write(buffer, binary.BigEndian, uint32(len(entry.Key))),   // Key length)
 			binary.Write(buffer, binary.BigEndian, uint32(len(entry.Value))), // Value length
@@ -34,9 +38,6 @@ func (db *DataBlock) Encode() ([]byte, error) {
 }
 
 func (db *DataBlock) Decode(data []byte) error {
-	buffer := pool.Get()
-	defer pool.Put(buffer)
-
 	reader := bytes.NewReader(data)
 
 	for {
