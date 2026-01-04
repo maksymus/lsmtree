@@ -25,7 +25,7 @@ func (db *DataBlock) Encode() ([]byte, error) {
 		}
 
 		if err := errors.Join(
-			binary.Write(buffer, binary.BigEndian, uint32(len(entry.Key))),   // Key length)
+			binary.Write(buffer, binary.BigEndian, uint32(len(entry.Key))),   // Key length
 			binary.Write(buffer, binary.BigEndian, uint32(len(entry.Value))), // Value length
 			binary.Write(buffer, binary.BigEndian, entry.Key),                // Key
 			binary.Write(buffer, binary.BigEndian, entry.Value),              // Value

@@ -1,6 +1,7 @@
 package sstable
 
 import (
+	"bytes"
 	"errors"
 	"time"
 
@@ -131,4 +132,48 @@ func Build(entries []*util.Entry, blockSize int, level int) ([]byte, error) {
 	}
 
 	return sstableBuffer.Bytes(), nil
+}
+
+func Merge(entries ...[]*util.Entry) ([]*util.Entry, error) {
+	type heapItem struct {
+		entry     *util.Entry
+		listIndex int
+	}
+
+	heap := util.NewHeap[heapItem](func(a, b heapItem) bool {
+		return bytes.Compare(a.entry.Key, b.entry.Key) < 0
+	})
+
+	for i, list := range entries {
+		if len(list) > 0 {
+			heap.Push(heapItem{
+				entry:     list[0],
+				listIndex: i,
+			})
+			list = list[1:]
+		}
+	}
+
+	result := make([]*util.Entry, 0)
+
+	for heap.Len() > 0 {
+		item, _ := heap.Pop()
+		currentEntry := item.entry
+		listIndex := item.listIndex
+
+		list := entries[listIndex]
+		if len(list) > 0 {
+			heap.Push(heapItem{
+				entry:     list[0],
+				listIndex: listIndex,
+			})
+			list = list[1:]
+		}
+
+		if !currentEntry.Tombstone {
+			result = append(result, currentEntry)
+		}
+	}
+
+	return result, nil
 }
