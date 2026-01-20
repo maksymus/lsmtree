@@ -34,6 +34,7 @@ type Block struct {
 	length uint64
 }
 
+// Build constructs an SSTable from the given entries, block size, and level.
 func Build(entries []*util.Entry, blockSize int, level int) ([]byte, error) {
 	sstableBuffer := bytesBufPool.Get()
 	defer bytesBufPool.Put(sstableBuffer)
@@ -134,23 +135,32 @@ func Build(entries []*util.Entry, blockSize int, level int) ([]byte, error) {
 	return sstableBuffer.Bytes(), nil
 }
 
+// Merge merges multiple sorted lists of entries into a single sorted list,
+// removing any entries marked as tombstones.
 func Merge(entries ...[]*util.Entry) ([]*util.Entry, error) {
 	type heapItem struct {
-		entry     *util.Entry
-		listIndex int
+		entry      *util.Entry
+		listIndex  int
+		entryIndex int
 	}
 
 	heap := util.NewHeap[heapItem](func(a, b heapItem) bool {
-		return bytes.Compare(a.entry.Key, b.entry.Key) < 0
+		compare := bytes.Compare(a.entry.Key, b.entry.Key)
+
+		// If keys are equal, maintain the order based on the list index, last written wins
+		if compare == 0 {
+			return a.listIndex > b.listIndex
+		}
+		return compare < 0
 	})
 
 	for i, list := range entries {
 		if len(list) > 0 {
 			heap.Push(heapItem{
-				entry:     list[0],
-				listIndex: i,
+				entry:      list[0],
+				listIndex:  i,
+				entryIndex: 0,
 			})
-			list = list[1:]
 		}
 	}
 
@@ -160,18 +170,21 @@ func Merge(entries ...[]*util.Entry) ([]*util.Entry, error) {
 		item, _ := heap.Pop()
 		currentEntry := item.entry
 		listIndex := item.listIndex
+		entryIndex := item.entryIndex + 1
 
 		list := entries[listIndex]
-		if len(list) > 0 {
+		if entryIndex < len(list) {
 			heap.Push(heapItem{
-				entry:     list[0],
-				listIndex: listIndex,
+				entry:      list[entryIndex],
+				listIndex:  listIndex,
+				entryIndex: entryIndex,
 			})
-			list = list[1:]
 		}
 
 		if !currentEntry.Tombstone {
-			result = append(result, currentEntry)
+			if len(result) == 0 || !bytes.Equal(result[len(result)-1].Key, currentEntry.Key) {
+				result = append(result, currentEntry)
+			}
 		}
 	}
 

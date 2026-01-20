@@ -206,3 +206,81 @@ func Test_Build(t *testing.T) {
 		t.Fatalf("Build returned empty data")
 	}
 }
+
+func Test_Merge(t *testing.T) {
+	entries1 := []*util.Entry{
+		{Key: []byte("apple"), Value: []byte("fruit")},
+		{Key: []byte("fig"), Value: []byte("fruit")},
+		{Key: []byte("grape"), Value: []byte("fruit")},
+	}
+	entries2 := []*util.Entry{
+		{Key: []byte("banana"), Value: []byte("fruit")},
+		{Key: []byte("carrot"), Value: []byte("vegetable")},
+		{Key: []byte("date"), Value: []byte("fruit")},
+		{Key: []byte("eggplant"), Value: []byte("vegetable")},
+	}
+
+	mergedData, err := Merge(entries1, entries2)
+	if err != nil {
+		t.Fatalf("Merge failed: %v", err)
+	}
+
+	expectedKeys := []*util.Entry{
+		{Key: []byte("apple"), Value: []byte("fruit")},
+		{Key: []byte("banana"), Value: []byte("fruit")},
+		{Key: []byte("carrot"), Value: []byte("vegetable")},
+		{Key: []byte("date"), Value: []byte("fruit")},
+		{Key: []byte("eggplant"), Value: []byte("vegetable")},
+		{Key: []byte("fig"), Value: []byte("fruit")},
+		{Key: []byte("grape"), Value: []byte("fruit")},
+	}
+
+	if len(mergedData) != len(expectedKeys) {
+		t.Fatalf("Expected %d entries, got %d", len(expectedKeys), len(mergedData))
+	}
+
+	for i, entry := range mergedData {
+		if !bytes.Equal(entry.Key, expectedKeys[i].Key) || !bytes.Equal(entry.Value, expectedKeys[i].Value) {
+			t.Errorf("Entry %d mismatch: expected %+v, got %+v", i, expectedKeys[i], entry)
+		}
+	}
+}
+
+func Test_MergeDuplicateKeys(t *testing.T) {
+	entries1 := []*util.Entry{
+		{Key: []byte("apple"), Value: []byte("apple1")},
+		{Key: []byte("banana"), Value: []byte("banana1")},
+		{Key: []byte("mango"), Value: []byte("mango1")},
+	}
+	entries2 := []*util.Entry{
+		{Key: []byte("banana"), Value: []byte("banana2")},
+		{Key: []byte("carrot"), Value: []byte("carrot2")},
+	}
+
+	entries3 := []*util.Entry{
+		{Key: []byte("apple"), Value: []byte("apple3")},
+		{Key: []byte("banana"), Value: []byte("banana3")},
+	}
+
+	mergedData, err := Merge(entries1, entries2, entries3)
+	if err != nil {
+		t.Fatalf("Merge failed: %v", err)
+	}
+
+	expectedKeys := []*util.Entry{
+		{Key: []byte("apple"), Value: []byte("apple3")},
+		{Key: []byte("banana"), Value: []byte("banana3")},
+		{Key: []byte("carrot"), Value: []byte("carrot2")},
+		{Key: []byte("mango"), Value: []byte("mango1")},
+	}
+
+	if len(mergedData) != len(expectedKeys) {
+		t.Fatalf("Expected %d entries, got %d", len(expectedKeys), len(mergedData))
+	}
+
+	for i, entry := range mergedData {
+		if !bytes.Equal(entry.Key, expectedKeys[i].Key) || !bytes.Equal(entry.Value, expectedKeys[i].Value) {
+			t.Errorf("Entry %d mismatch: expected %+v, got %+v", i, expectedKeys[i], entry)
+		}
+	}
+}
