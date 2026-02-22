@@ -8,8 +8,14 @@ import (
 	"time"
 
 	"github.com/maksymus/lmstree/util"
-	wal "github.com/maksymus/lmstree/wal"
+	walPkg "github.com/maksymus/lmstree/wal"
 )
+
+// WAL is the interface used by MemTable for write-ahead logging.
+type WAL interface {
+	Write(entries ...*util.Entry) error
+	CompareVersion(version string) int
+}
 
 // MemTable represents an in-memory table with a skip list and a write-ahead log (WAL).
 // It supports concurrent access and can be set to read-only mode.
@@ -19,25 +25,20 @@ import (
 type MemTable struct {
 	mutex    sync.Mutex
 	list     *util.SkipList
-	wal      *wal.WAL
+	wal      WAL
 	dir      string
 	readonly bool
 }
 
-// NewMemTable creates a new MemTable with the specified directory and skip list level.
-func NewMemTable(dir string, level int) (*MemTable, error) {
-	walFile, err := wal.Create(dir)
-	if err != nil {
-		return nil, err
-	}
-
+// NewMemTable creates a new MemTable with the specified directory, skip list level, and WAL implementation.
+func NewMemTable(dir string, level int, wal WAL) *MemTable {
 	list := util.NewSkipList(level, rand.New(rand.NewSource(time.Now().Unix())))
 
 	return &MemTable{
 		list: list,
-		wal:  walFile,
+		wal:  wal,
 		dir:  dir,
-	}, nil
+	}
 }
 
 // Set adds a key-value pair to the MemTable.
@@ -83,7 +84,7 @@ func (m *MemTable) Recover() error {
 	// Filter WAL files
 	var files []string
 	for _, file := range dirs {
-		if version, err := wal.VersionFromFileName(file.Name()); err == nil {
+		if version, err := walPkg.VersionFromFileName(file.Name()); err == nil {
 			if !file.IsDir() && m.wal.CompareVersion(version) < 0 {
 				files = append(files, file.Name())
 			}
@@ -100,7 +101,7 @@ func (m *MemTable) Recover() error {
 
 	// Replay WAL files in order
 	for _, file := range files {
-		walFile, err := wal.Open(file)
+		walFile, err := walPkg.Open(file)
 		if err != nil {
 			return err
 		}
