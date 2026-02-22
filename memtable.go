@@ -26,7 +26,7 @@ type MemTable struct {
 
 // NewMemTable creates a new MemTable with the specified directory and skip list level.
 func NewMemTable(dir string, level int) (*MemTable, error) {
-	wal, err := wal.Create(dir)
+	walFile, err := wal.Create(dir)
 	if err != nil {
 		return nil, err
 	}
@@ -35,7 +35,7 @@ func NewMemTable(dir string, level int) (*MemTable, error) {
 
 	return &MemTable{
 		list: list,
-		wal:  wal,
+		wal:  walFile,
 		dir:  dir,
 	}, nil
 }
@@ -100,12 +100,12 @@ func (m *MemTable) Recover() error {
 
 	// Replay WAL files in order
 	for _, file := range files {
-		wal, err := wal.Open(file)
+		walFile, err := wal.Open(file)
 		if err != nil {
 			return err
 		}
 
-		entries, err := wal.Read()
+		entries, err := walFile.Read()
 		if err != nil {
 			return err
 		}
@@ -118,7 +118,7 @@ func (m *MemTable) Recover() error {
 			m.list.Insert(entry.Key, entry.Value)
 		}
 
-		if err := wal.Delete(); err != nil {
+		if err := walFile.Delete(); err != nil {
 			return err
 		}
 	}
