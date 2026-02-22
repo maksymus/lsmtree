@@ -150,3 +150,118 @@ func TestSkipList_All(t *testing.T) {
 		}
 	}
 }
+
+func TestSkipList_All_SortedOrder(t *testing.T) {
+	list := NewSkipList(5, rand.New(rand.NewSource(0)))
+	// Insert out of order
+	list.Insert([]byte("cherry"), []byte("c"))
+	list.Insert([]byte("apple"), []byte("a"))
+	list.Insert([]byte("banana"), []byte("b"))
+
+	values := list.All()
+	if len(values) != 3 {
+		t.Fatalf("All() returned %d values, want 3", len(values))
+	}
+
+	expected := [][]byte{[]byte("a"), []byte("b"), []byte("c")}
+	for i, val := range values {
+		if !bytes.Equal(val, expected[i]) {
+			t.Errorf("All()[%d] = %s, want %s", i, val, expected[i])
+		}
+	}
+}
+
+func TestSkipList_All_Empty(t *testing.T) {
+	list := NewSkipList(5, rand.New(rand.NewSource(0)))
+	values := list.All()
+	if len(values) != 0 {
+		t.Fatalf("All() on empty list returned %d values, want 0", len(values))
+	}
+}
+
+func TestSkipList_Reset(t *testing.T) {
+	list := NewSkipList(5, rand.New(rand.NewSource(0)))
+	list.Insert([]byte("key1"), []byte{1})
+	list.Insert([]byte("key2"), []byte{2})
+	list.Insert([]byte("key3"), []byte{3})
+
+	list.Reset()
+
+	// All values should be gone
+	values := list.All()
+	if len(values) != 0 {
+		t.Fatalf("All() after Reset returned %d values, want 0", len(values))
+	}
+
+	// Get should not find anything
+	_, found := list.Get([]byte("key1"))
+	if found {
+		t.Error("expected key1 to not be found after Reset")
+	}
+
+	// Should be able to insert again after Reset
+	list.Insert([]byte("newkey"), []byte{42})
+	val, found := list.Get([]byte("newkey"))
+	if !found || !bytes.Equal(val, []byte{42}) {
+		t.Errorf("expected to find newkey after Reset+Insert, got (%v, %v)", val, found)
+	}
+}
+
+func TestSkipList_LowerBound(t *testing.T) {
+	list := NewSkipList(5, rand.New(rand.NewSource(0)))
+	list.Insert([]byte("b"), []byte("B"))
+	list.Insert([]byte("d"), []byte("D"))
+	list.Insert([]byte("f"), []byte("F"))
+
+	tests := []struct {
+		name      string
+		key       []byte
+		wantValue []byte
+		wantFound bool
+	}{
+		{
+			name:      "exact match",
+			key:       []byte("d"),
+			wantValue: []byte("D"),
+			wantFound: true,
+		},
+		{
+			name:      "between keys",
+			key:       []byte("c"),
+			wantValue: []byte("D"),
+			wantFound: true,
+		},
+		{
+			name:      "before first key",
+			key:       []byte("a"),
+			wantValue: []byte("B"),
+			wantFound: true,
+		},
+		{
+			name:      "after last key",
+			key:       []byte("g"),
+			wantValue: nil,
+			wantFound: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			val, found := list.LowerBound(tt.key)
+			if found != tt.wantFound {
+				t.Errorf("LowerBound(%s) found = %v, want %v", tt.key, found, tt.wantFound)
+			}
+			if !bytes.Equal(val, tt.wantValue) {
+				t.Errorf("LowerBound(%s) = %s, want %s", tt.key, val, tt.wantValue)
+			}
+		})
+	}
+}
+
+func TestSkipList_LowerBound_Empty(t *testing.T) {
+	list := NewSkipList(5, rand.New(rand.NewSource(0)))
+	_, found := list.LowerBound([]byte("a"))
+	if found {
+		t.Error("expected LowerBound on empty list to return false")
+	}
+}

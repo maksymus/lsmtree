@@ -122,3 +122,41 @@ func TestBytesBufferPool_NilPut(t *testing.T) {
 		t.Errorf("Expected non-nil buffer from pool after putting nil")
 	}
 }
+
+func TestEntry_Size(t *testing.T) {
+	tests := []struct {
+		name  string
+		entry Entry
+		want  int
+	}{
+		{
+			name:  "normal entry",
+			entry: Entry{Key: []byte("hello"), Value: []byte("world")},
+			want:  5 + 5 + 1,
+		},
+		{
+			name:  "empty key and value",
+			entry: Entry{Key: []byte{}, Value: []byte{}},
+			want:  0 + 0 + 1,
+		},
+		{
+			name:  "nil key and value",
+			entry: Entry{},
+			want:  0 + 0 + 1,
+		},
+		{
+			name:  "tombstone entry",
+			entry: Entry{Key: []byte("k"), Value: []byte("v"), Tombstone: true},
+			want:  1 + 1 + 1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.entry.Size()
+			if got != tt.want {
+				t.Errorf("Size() = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
