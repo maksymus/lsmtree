@@ -1,6 +1,7 @@
 package lmstree
 
 import (
+	"errors"
 	"math/rand"
 	"os"
 	"slices"
@@ -10,6 +11,9 @@ import (
 	"github.com/maksymus/lmstree/util"
 	walPkg "github.com/maksymus/lmstree/wal"
 )
+
+// ErrReadonly is returned when a write is attempted on a readonly MemTable.
+var ErrReadonly = errors.New("memtable is readonly")
 
 // WAL is the interface used by MemTable for write-ahead logging.
 type WAL interface {
@@ -47,7 +51,7 @@ func (m *MemTable) Set(key, value []byte) error {
 	defer m.mutex.Unlock()
 
 	if m.readonly {
-		return nil
+		return ErrReadonly
 	}
 
 	entry := &util.Entry{
