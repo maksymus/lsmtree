@@ -1,9 +1,10 @@
-package lmstree
+package memtable
 
 import (
 	"errors"
 	"math/rand"
 	"os"
+	"path/filepath"
 	"slices"
 	"sync"
 	"time"
@@ -31,6 +32,7 @@ type MemTable struct {
 	list     *util.SkipList
 	wal      WAL
 	dir      string
+	size     int64
 	readonly bool
 }
 
@@ -63,16 +65,63 @@ func (m *MemTable) Set(key, value []byte) error {
 		return err
 	}
 
-	m.list.Insert(key, value)
+	m.list.InsertEntry(entry)
+	m.size += int64(len(key) + len(value))
 	return nil
 }
 
 // Get retrieves the value associated with the given key from the MemTable.
+// It does not expose tombstone status; use GetEntry for that.
 func (m *MemTable) Get(key []byte) ([]byte, bool) {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 
-	return m.list.Get(key)
+	entry, ok := m.list.GetEntry(key)
+	if !ok || entry.Tombstone {
+		return nil, false
+	}
+	return entry.Value, true
+}
+
+// GetEntry retrieves the full Entry for the given key, including tombstone status.
+func (m *MemTable) GetEntry(key []byte) (*util.Entry, bool) {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+
+	return m.list.GetEntry(key)
+}
+
+// Delete marks the given key as deleted by inserting a tombstone entry.
+func (m *MemTable) Delete(key []byte) error {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+
+	if m.readonly {
+		return ErrReadonly
+	}
+
+	entry := &util.Entry{Key: key, Value: []byte{}, Tombstone: true}
+	if err := m.wal.Write(entry); err != nil {
+		return err
+	}
+	m.list.InsertEntry(entry)
+	return nil
+}
+
+// Size returns the approximate byte size of entries written to the MemTable.
+func (m *MemTable) Size() int64 {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+
+	return m.size
+}
+
+// Entries returns all entries in sorted key order, deduplicated (newest value wins).
+func (m *MemTable) Entries() []*util.Entry {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+
+	return m.list.Entries()
 }
 
 // Recover replays the WAL files to restore the MemTable state after a crash.
@@ -105,7 +154,7 @@ func (m *MemTable) Recover() error {
 
 	// Replay WAL files in order
 	for _, file := range files {
-		walFile, err := walPkg.Open(file)
+		walFile, err := walPkg.Open(filepath.Join(m.dir, file))
 		if err != nil {
 			return err
 		}
@@ -120,7 +169,10 @@ func (m *MemTable) Recover() error {
 			if err := m.wal.Write(entry); err != nil {
 				return err
 			}
-			m.list.Insert(entry.Key, entry.Value)
+			m.list.InsertEntry(entry)
+			if !entry.Tombstone {
+				m.size += int64(len(entry.Key) + len(entry.Value))
+			}
 		}
 
 		if err := walFile.Delete(); err != nil {

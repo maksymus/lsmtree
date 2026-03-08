@@ -1,4 +1,4 @@
-package lmstree
+package memtable
 
 import (
 	"bytes"

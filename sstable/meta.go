@@ -22,7 +22,9 @@ func (mb *MetaBlock) Encode() ([]byte, error) {
 	); err != nil {
 		return nil, err
 	}
-	return buffer.Bytes(), nil
+	b := make([]byte, buffer.Len())
+	copy(b, buffer.Bytes())
+	return b, nil
 }
 
 func (mb *MetaBlock) Decode(data []byte) error {

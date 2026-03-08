@@ -147,6 +147,74 @@ func (sl *SkipList) Reset() {
 	sl.length = 0
 }
 
+// InsertEntry adds a new Entry to the skip list, preserving tombstone status.
+// If the key already exists, the new entry is prepended before the old one at level 0,
+// so Get/GetEntry return the newest value.
+func (sl *SkipList) InsertEntry(entry *Entry) {
+	node := &SkipListNode{
+		Entry:   *entry,
+		forward: make([]*SkipListNode, sl.maxLevel),
+		level:   0,
+	}
+
+	for i := 0; i < sl.maxLevel-1; i++ {
+		if sl.rand.Intn(2) == 0 {
+			node.level++
+		} else {
+			break
+		}
+	}
+
+	if node.level > sl.currentLevel {
+		sl.currentLevel = node.level
+	}
+
+	current := sl.head
+	for i := sl.currentLevel; i >= 0; i-- {
+		for current.forward[i] != nil && bytes.Compare(current.forward[i].Key, entry.Key) < 0 {
+			current = current.forward[i]
+		}
+		if i <= node.level {
+			node.forward[i] = current.forward[i]
+			current.forward[i] = node
+		}
+	}
+
+	sl.length++
+}
+
+// GetEntry retrieves the Entry (including tombstone status) for the given key.
+func (sl *SkipList) GetEntry(key []byte) (*Entry, bool) {
+	current := sl.head
+	for i := sl.currentLevel; i >= 0; i-- {
+		for current.forward[i] != nil && bytes.Compare(current.forward[i].Key, key) < 0 {
+			current = current.forward[i]
+		}
+		if current.forward[i] != nil && bytes.Equal(current.forward[i].Key, key) {
+			e := current.forward[i].Entry
+			return &e, true
+		}
+	}
+	return nil, false
+}
+
+// Entries returns all entries in sorted key order with duplicates deduplicated
+// (the first occurrence in level-0 traversal is the newest value and wins).
+func (sl *SkipList) Entries() []*Entry {
+	entries := make([]*Entry, 0, sl.length)
+	current := sl.head.forward[0]
+	var lastKey []byte
+	for current != nil {
+		if !bytes.Equal(current.Key, lastKey) {
+			e := current.Entry
+			entries = append(entries, &e)
+			lastKey = current.Key
+		}
+		current = current.forward[0]
+	}
+	return entries
+}
+
 // LowerBound finds the smallest key in the skip list that is greater than or equal to the given key.
 func (sl *SkipList) LowerBound(key []byte) ([]byte, bool) {
 	current := sl.head

@@ -95,7 +95,7 @@ func (w *WAL) Write(entries ...*util.Entry) error {
 		if len(entry.Key) == 0 {
 			return fmt.Errorf("entry at index %d has empty Key", i)
 		}
-		if len(entry.Value) == 0 {
+		if len(entry.Value) == 0 && !entry.Tombstone {
 			return fmt.Errorf("entry at index %d has empty Value", i)
 		}
 	}

@@ -34,7 +34,11 @@ func (db *DataBlock) Encode() ([]byte, error) {
 			return nil, err
 		}
 	}
-	return buffer.Bytes(), nil
+	// Copy before returning: the pool buffer is reset on function return,
+	// and subsequent Encode() calls may recycle the same backing array.
+	b := make([]byte, buffer.Len())
+	copy(b, buffer.Bytes())
+	return b, nil
 }
 
 func (db *DataBlock) Decode(data []byte) error {

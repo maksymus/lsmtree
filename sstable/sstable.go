@@ -165,6 +165,7 @@ func Merge(entries ...[]*util.Entry) ([]*util.Entry, error) {
 	}
 
 	result := make([]*util.Entry, 0)
+	var lastKey []byte
 
 	for heap.Len() > 0 {
 		item, _ := heap.Pop()
@@ -181,10 +182,15 @@ func Merge(entries ...[]*util.Entry) ([]*util.Entry, error) {
 			})
 		}
 
+		// Skip lower-priority duplicates — the highest listIndex already won.
+		if bytes.Equal(lastKey, currentEntry.Key) {
+			continue
+		}
+		lastKey = currentEntry.Key
+
+		// Tombstones shadow older entries; drop them from the merged output.
 		if !currentEntry.Tombstone {
-			if len(result) == 0 || !bytes.Equal(result[len(result)-1].Key, currentEntry.Key) {
-				result = append(result, currentEntry)
-			}
+			result = append(result, currentEntry)
 		}
 	}
 

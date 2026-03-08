@@ -23,7 +23,9 @@ func (f *Footer) Encode() ([]byte, error) {
 	); err != nil {
 		return nil, err
 	}
-	return buffer.Bytes(), nil
+	b := make([]byte, buffer.Len())
+	copy(b, buffer.Bytes())
+	return b, nil
 }
 
 func (f *Footer) Decode(data []byte) error {
