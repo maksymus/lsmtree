@@ -7,7 +7,6 @@ import (
 	"regexp"
 	"sort"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -177,7 +176,9 @@ func (t *LSMTree) Close() error {
 	defer t.mu.Unlock()
 
 	if t.memTable.Size() > 0 {
-		return t.flush()
+		if err := t.flush(); err != nil {
+			return err
+		}
 	}
 	return t.wal.Close()
 }
@@ -288,7 +289,33 @@ func (t *LSMTree) compact(level int) error {
 		os.Remove(sst.path)
 	}
 
+	// Cascade: if the newly written level+1 exceeds its size budget, compact it too.
+	if len(t.levels[level+1]) > 0 && t.levelSize(level+1) > t.levelSizeLimit(level+1) {
+		return t.compact(level + 1)
+	}
+
 	return nil
+}
+
+// levelSizeLimit returns the byte budget for the given level.
+// Base (level 1) = MemTableSize × L0CompactThresh; each subsequent level is 10× larger.
+func (t *LSMTree) levelSizeLimit(level int) int64 {
+	limit := t.opts.MemTableSize * int64(t.opts.L0CompactThresh)
+	for i := 1; i < level; i++ {
+		limit *= 10
+	}
+	return limit
+}
+
+// levelSize returns the total on-disk byte size of all SSTables at the given level.
+func (t *LSMTree) levelSize(level int) int64 {
+	var total int64
+	for _, sst := range t.levels[level] {
+		if info, err := os.Stat(sst.path); err == nil {
+			total += info.Size()
+		}
+	}
+	return total
 }
 
 // writeSSTFile writes data to a new uniquely-named SSTable file for the given level.
@@ -297,10 +324,20 @@ func (t *LSMTree) writeSSTFile(level int, data []byte) (string, error) {
 	version := fmt.Sprintf("%s-%d", now.Format("20060102150405"), now.Nanosecond())
 	name := fmt.Sprintf("sst-%d-%s.sst", level, version)
 	path := filepath.Join(t.opts.Dir, name)
-	if err := os.WriteFile(path, data, 0644); err != nil {
+
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
+	if err != nil {
 		return "", err
 	}
-	return path, nil
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		return "", err
+	}
+	if err := f.Sync(); err != nil { // flush to disk before WAL is deleted
+		f.Close()
+		return "", err
+	}
+	return path, f.Close()
 }
 
 // loadSSTables scans opts.Dir for existing SSTable files and opens Readers for them.
@@ -346,10 +383,9 @@ func sstLevel(name string) (int, bool) {
 	if m == nil {
 		return 0, false
 	}
-	level, err := strconv.Atoi(strings.TrimLeft(m[1], "0"))
+	level, err := strconv.Atoi(m[1])
 	if err != nil {
-		// m[1] was "0" and TrimLeft returned ""
-		return 0, true
+		return 0, false
 	}
 	return level, true
 }

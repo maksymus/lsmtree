@@ -147,16 +147,34 @@ func (sl *SkipList) Reset() {
 	sl.length = 0
 }
 
-// InsertEntry adds a new Entry to the skip list, preserving tombstone status.
-// If the key already exists, the new entry is prepended before the old one at level 0,
-// so Get/GetEntry return the newest value.
+// InsertEntry upserts an Entry into the skip list.
+// If the key already exists the existing node is updated in place, so a search
+// starting from any level always finds the current value. If the key is new a
+// fresh node is inserted at a random level.
 func (sl *SkipList) InsertEntry(entry *Entry) {
+	// Record the rightmost predecessor at each level (needed for new-node wiring).
+	update := make([]*SkipListNode, sl.maxLevel)
+	current := sl.head
+	for i := sl.currentLevel; i >= 0; i-- {
+		for current.forward[i] != nil && bytes.Compare(current.forward[i].Key, entry.Key) < 0 {
+			current = current.forward[i]
+		}
+		update[i] = current
+	}
+
+	// If the key already exists at level 0, update in place and return.
+	// Level 0 contains every node, so this is the authoritative check.
+	if next := update[0].forward[0]; next != nil && bytes.Equal(next.Key, entry.Key) {
+		next.Entry = *entry
+		return
+	}
+
+	// Key not found — insert a new node at a random level.
 	node := &SkipListNode{
 		Entry:   *entry,
 		forward: make([]*SkipListNode, sl.maxLevel),
 		level:   0,
 	}
-
 	for i := 0; i < sl.maxLevel-1; i++ {
 		if sl.rand.Intn(2) == 0 {
 			node.level++
@@ -164,22 +182,16 @@ func (sl *SkipList) InsertEntry(entry *Entry) {
 			break
 		}
 	}
-
 	if node.level > sl.currentLevel {
+		for i := sl.currentLevel + 1; i <= node.level; i++ {
+			update[i] = sl.head
+		}
 		sl.currentLevel = node.level
 	}
-
-	current := sl.head
-	for i := sl.currentLevel; i >= 0; i-- {
-		for current.forward[i] != nil && bytes.Compare(current.forward[i].Key, entry.Key) < 0 {
-			current = current.forward[i]
-		}
-		if i <= node.level {
-			node.forward[i] = current.forward[i]
-			current.forward[i] = node
-		}
+	for i := 0; i <= node.level; i++ {
+		node.forward[i] = update[i].forward[i]
+		update[i].forward[i] = node
 	}
-
 	sl.length++
 }
 

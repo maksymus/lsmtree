@@ -105,6 +105,7 @@ func (m *MemTable) Delete(key []byte) error {
 		return err
 	}
 	m.list.InsertEntry(entry)
+	m.size += int64(len(key) + 1) // count tombstone toward flush threshold
 	return nil
 }
 

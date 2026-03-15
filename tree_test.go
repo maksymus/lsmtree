@@ -150,3 +150,82 @@ func TestLSMTree_CompactionDeleteShadowing(t *testing.T) {
 		t.Fatalf("Get 'c': got (%q, %v), want (\"3\", true)", val, ok)
 	}
 }
+
+func TestLSMTree_CloseFlushesAndClosesWAL(t *testing.T) {
+	dir := tempDir(t)
+
+	tree, err := Open(DefaultOptions(dir))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if err := tree.Put([]byte("k"), []byte("v")); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	// Close must flush the MemTable to an SSTable and close the rotated WAL.
+	if err := tree.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	// Reopen and verify the data survived.
+	tree2, err := Open(DefaultOptions(dir))
+	if err != nil {
+		t.Fatalf("Reopen: %v", err)
+	}
+	defer tree2.Close()
+	val, ok := tree2.Get([]byte("k"))
+	if !ok {
+		t.Fatal("Get after reopen: key not found")
+	}
+	if !bytes.Equal(val, []byte("v")) {
+		t.Fatalf("Get after reopen: got %q, want %q", val, "v")
+	}
+}
+
+func TestLSMTree_CascadeCompaction(t *testing.T) {
+	opts := DefaultOptions(tempDir(t))
+	opts.MemTableSize = 1   // flush on every Put
+	opts.BlockSize = 64
+	opts.L0CompactThresh = 2 // L0→L1 after 2 files; L1 limit = 1*2 = 2 bytes (tiny, triggers L1→L2 immediately)
+
+	tree, err := Open(opts)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer tree.Close()
+
+	// Write enough entries to force multiple L0→L1 compactions and therefore
+	// cascade into L2.
+	const n = 20
+	for i := 0; i < n; i++ {
+		key := []byte(fmt.Sprintf("key%03d", i))
+		val := []byte(fmt.Sprintf("val%03d", i))
+		if err := tree.Put(key, val); err != nil {
+			t.Fatalf("Put %s: %v", key, err)
+		}
+	}
+
+	// Every key must be readable regardless of how many cascade compactions occurred.
+	for i := 0; i < n; i++ {
+		key := []byte(fmt.Sprintf("key%03d", i))
+		want := []byte(fmt.Sprintf("val%03d", i))
+		got, ok := tree.Get(key)
+		if !ok {
+			t.Fatalf("Get %s: not found", key)
+		}
+		if !bytes.Equal(got, want) {
+			t.Fatalf("Get %s: got %q, want %q", key, got, want)
+		}
+	}
+
+	// Verify data has been pushed beyond L1: at least one level ≥ 2 must be non-empty.
+	hasDeepLevel := false
+	for i := 2; i < opts.MaxLevels; i++ {
+		if len(tree.levels[i]) > 0 {
+			hasDeepLevel = true
+			break
+		}
+	}
+	if !hasDeepLevel {
+		t.Fatal("expected cascade compaction to produce SSTables at level ≥ 2")
+	}
+}
