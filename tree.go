@@ -180,6 +180,11 @@ func (t *LSMTree) Close() error {
 			return err
 		}
 	}
+	for _, level := range t.levels {
+		for _, sst := range level {
+			sst.reader.Close()
+		}
+	}
 	return t.wal.Close()
 }
 
@@ -286,6 +291,7 @@ func (t *LSMTree) compact(level int) error {
 	}
 
 	for _, sst := range toDelete {
+		sst.reader.Close()
 		os.Remove(sst.path)
 	}
 

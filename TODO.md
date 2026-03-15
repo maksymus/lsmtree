@@ -56,74 +56,13 @@ data block entirely.
 
 ---
 
-### `Reader` loads the entire SSTable into memory
+### ~~`Reader` loads the entire SSTable into memory~~ ✅
 
-`os.ReadFile` reads every byte upfront. Only the footer and index block are needed at
-open time; the matching data block should be fetched on demand.
-
-```go
-// sstable/reader.go
-type Reader struct {
-    f     *os.File
-    size  int64
-    index *IndexBlock // loaded once at open
-    bloom *util.BloomFilter
-}
-
-func OpenReader(path string) (*Reader, error) {
-    f, err := os.Open(path)
-    if err != nil {
-        return nil, err
-    }
-    info, err := f.Stat()
-    if err != nil {
-        f.Close()
-        return nil, err
-    }
-    r := &Reader{f: f, size: info.Size()}
-
-    // Read and decode footer + index block only.
-    footerBuf := make([]byte, footerSize)
-    if _, err := f.ReadAt(footerBuf, info.Size()-footerSize); err != nil {
-        f.Close()
-        return nil, err
-    }
-    footer := &Footer{}
-    if err := footer.Decode(footerBuf); err != nil {
-        f.Close()
-        return nil, err
-    }
-    indexBuf := make([]byte, footer.index.length)
-    if _, err := f.ReadAt(indexBuf, int64(footer.index.offset)); err != nil {
-        f.Close()
-        return nil, err
-    }
-    r.index = &IndexBlock{}
-    if err := r.index.Decode(indexBuf); err != nil {
-        f.Close()
-        return nil, err
-    }
-    return r, nil
-}
-
-func (r *Reader) Search(key []byte) (*util.Entry, bool) {
-    block, found := r.index.Search(key)
-    if !found {
-        return nil, false
-    }
-    buf := make([]byte, block.length)
-    if _, err := r.f.ReadAt(buf, int64(block.offset)); err != nil {
-        return nil, false
-    }
-    db := &DataBlock{}
-    if err := db.Decode(buf); err != nil {
-        return nil, false
-    }
-    return db.Search(key)
-}
-
-func (r *Reader) Close() error { return r.f.Close() }
-```
+`Reader` now holds an `*os.File` instead of `[]byte`. `OpenReader` reads only the
+footer (32 bytes via `ReadAt`), index block, and meta block (for the bloom filter)
+at open time. `Search` fetches only the matching data block on demand; `Entries`
+fetches each data block in turn. Added `Reader.Close()`. `LSMTree.Close()` closes
+all level readers; `compact()` closes readers before deleting their files.
 
 ---
 
