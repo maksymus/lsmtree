@@ -3,6 +3,9 @@
 ## [Unreleased]
 
 ### Added
+- **Bloom filter per SSTable** — `BloomFilter.Encode()` / `util.DecodeBloomFilter()` added to `util/filter.go` (bit-packed format: k | m | bits). `Build()` constructs a 1%-FPR filter over all entry keys and stores it in `MetaBlock` (`createdAt | level | bloomLen | bloom`). `OpenReader` decodes the filter once at open time; `Reader.Search` checks it as a fast path before touching the index or data blocks, turning most negative lookups into a single in-memory bitset scan.
+
+### Fixed
 - **Cascading compaction** (`tree.go`) — after each `compact(level)`, the resulting level+1 SSTable is compared against a size limit (`MemTableSize × L0CompactThresh × 10^(level-1)`); if exceeded, `compact(level+1)` is called recursively, propagating data down through all levels instead of letting L1+ grow unboundedly
 - **`levelSizeLimit` / `levelSize`** (`tree.go`) — helpers used by the cascade logic; `levelSizeLimit` computes the per-level byte budget (10× multiplier per level), `levelSize` sums on-disk sizes via `os.Stat`
 - **`TestLSMTree_CascadeCompaction`** (`tree_test.go`) — verifies that data is pushed to level ≥ 2 and all keys remain readable after multiple cascading compactions

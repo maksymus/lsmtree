@@ -39,9 +39,7 @@ func (ib *IndexBlock) Encode() ([]byte, error) {
 			return nil, err
 		}
 	}
-	b := make([]byte, buffer.Len())
-	copy(b, buffer.Bytes())
-	return b, nil
+	return bytes.Clone(buffer.Bytes()), nil
 }
 
 func (ib *IndexBlock) Decode(data []byte) error {

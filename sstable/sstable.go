@@ -95,10 +95,15 @@ func Build(entries []*util.Entry, blockSize int, level int) ([]byte, error) {
 		return nil, err
 	}
 
-	// Build Meta Block
+	// Build Meta Block (includes bloom filter for fast negative lookup).
+	bloom := util.NewBloomFilter(len(entries), 0.01)
+	for _, e := range entries {
+		bloom.Add(e.Key)
+	}
 	metaBlock := &MetaBlock{
 		createdAt: time.Now().Unix(),
 		level:     level,
+		bloom:     bloom.Encode(),
 	}
 
 	metaBlockBytes, err := metaBlock.Encode()

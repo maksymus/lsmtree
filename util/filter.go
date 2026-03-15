@@ -1,6 +1,8 @@
 package util
 
 import (
+	"encoding/binary"
+	"fmt"
 	"hash"
 	"math"
 
@@ -50,6 +52,46 @@ func (bf *BloomFilter) Add(data []byte) {
 		index := h.Sum32() % uint32(len(bf.bitsets))
 		bf.bitsets[index] = true
 	}
+}
+
+// Encode serializes the BloomFilter to bytes.
+// Format: k (4 bytes) | m (4 bytes) | packed bit array (ceil(m/8) bytes).
+// The hash functions are reconstructed from their seed indices on decode.
+func (bf *BloomFilter) Encode() []byte {
+	k := uint32(len(bf.hashes))
+	m := uint32(len(bf.bitsets))
+	numBytes := (m + 7) / 8
+	buf := make([]byte, 8+numBytes)
+	binary.BigEndian.PutUint32(buf[0:], k)
+	binary.BigEndian.PutUint32(buf[4:], m)
+	for i, set := range bf.bitsets {
+		if set {
+			buf[8+uint32(i)/8] |= 1 << (uint(i) % 8)
+		}
+	}
+	return buf
+}
+
+// DecodeBloomFilter reconstructs a BloomFilter from bytes produced by Encode.
+func DecodeBloomFilter(data []byte) (*BloomFilter, error) {
+	if len(data) < 8 {
+		return nil, fmt.Errorf("bloom filter data too short: %d bytes", len(data))
+	}
+	k := binary.BigEndian.Uint32(data[0:])
+	m := binary.BigEndian.Uint32(data[4:])
+	numBytes := (m + 7) / 8
+	if uint32(len(data)) < 8+numBytes {
+		return nil, fmt.Errorf("bloom filter data truncated: need %d, got %d", 8+numBytes, len(data))
+	}
+	bitsets := make([]bool, m)
+	for i := range bitsets {
+		bitsets[i] = data[8+uint32(i)/8]>>(uint(i)%8)&1 == 1
+	}
+	hashes := make([]hash.Hash32, k)
+	for i := range hashes {
+		hashes[i] = murmur3.New32WithSeed(uint32(i))
+	}
+	return &BloomFilter{bitsets: bitsets, hashes: hashes}, nil
 }
 
 // Contains checks if an element is possibly in the BloomFilter.

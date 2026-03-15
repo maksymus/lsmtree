@@ -45,30 +45,14 @@ toward the flush threshold and delete-heavy workloads still trigger flushes.
 
 ## Performance
 
-### Bloom filters exist but are unused
+### ~~Bloom filters exist but are unused~~ ✅
 
-`util.BloomFilter` is already implemented. Build one per SSTable, serialise it alongside
-the MetaBlock, and check it in `Reader.Search` before touching the index or data blocks.
-This turns most negative lookups into a single in-memory bitset check.
-
-```go
-// sstable/sstable.go — build phase
-bloom := util.NewBloomFilter(len(entries), 0.01)
-for _, e := range entries {
-    bloom.Add(e.Key)
-}
-bloomBytes, err := bloom.Encode() // needs Encode/Decode added to BloomFilter
-// serialise bloomBytes into MetaBlock alongside createdAt and level
-
-// sstable/reader.go — lookup phase
-func (r *Reader) Search(key []byte) (*util.Entry, bool) {
-    // fast path: bloom filter rules out keys that are definitely absent
-    if r.bloom != nil && !r.bloom.Contains(key) {
-        return nil, false
-    }
-    // ... existing index → data block path ...
-}
-```
+Added `BloomFilter.Encode()` and `util.DecodeBloomFilter()`. `Build()` now creates a
+filter at 1% FPR, adds every entry key, and stores the serialized bytes in `MetaBlock`
+(format: `createdAt | level | bloomLen | bloom bits`). `OpenReader` decodes the filter
+once and caches it in `Reader.bloom`. `Search` checks the filter first and returns
+`nil, false` immediately for any key that is definitely absent, skipping the index and
+data block entirely.
 
 ---
 
