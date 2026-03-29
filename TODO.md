@@ -66,87 +66,15 @@ all level readers; `compact()` closes readers before deleting their files.
 
 ---
 
-### Flush and compaction hold the global write lock
+### ~~Flush and compaction hold the global write lock~~ ✅
 
-`Put` holds `t.mu.Lock()` for the full duration of `flush()`, blocking all concurrent
-reads and writes during file I/O. Rotate the MemTable pointer atomically (fast), then
-flush the old MemTable in a background goroutine.
-
-```go
-// tree.go
-type LSMTree struct {
-    mu        sync.RWMutex
-    opts      Options
-    memTable  *memtable.MemTable
-    immutable *memtable.MemTable // being flushed; checked by Get
-    wal       *walPkg.WAL
-    levels    [][]*sstableFile
-    flushCh   chan *memtable.MemTable
-    done      chan struct{}
-}
-
-func Open(opts Options) (*LSMTree, error) {
-    // ... existing setup ...
-    t.flushCh = make(chan *memtable.MemTable, 1)
-    t.done = make(chan struct{})
-    go t.flushWorker()
-    return t, nil
-}
-
-func (t *LSMTree) flushWorker() {
-    for {
-        select {
-        case mem := <-t.flushCh:
-            t.mu.Lock()
-            _ = t.flushMemTable(mem) // write SST, rotate WAL, maybe compact
-            t.immutable = nil
-            t.mu.Unlock()
-        case <-t.done:
-            return
-        }
-    }
-}
-
-func (t *LSMTree) Put(key, value []byte) error {
-    t.mu.Lock()
-    defer t.mu.Unlock()
-
-    if err := t.memTable.Set(key, value); err != nil {
-        return err
-    }
-    if t.memTable.Size() >= t.opts.MemTableSize && t.immutable == nil {
-        t.immutable = t.memTable
-        newWAL, _ := walPkg.Create(t.opts.Dir)
-        t.memTable = memtable.NewMemTable(t.opts.Dir, defaultSkipListLevel, newWAL)
-        t.wal = newWAL
-        t.flushCh <- t.immutable // hand off; lock released before actual I/O
-    }
-    return nil
-}
-
-func (t *LSMTree) Get(key []byte) ([]byte, bool) {
-    t.mu.RLock()
-    defer t.mu.RUnlock()
-
-    if entry, ok := t.memTable.GetEntry(key); ok {
-        if entry.Tombstone {
-            return nil, false
-        }
-        return entry.Value, true
-    }
-    // also check the immutable memtable being flushed
-    if t.immutable != nil {
-        if entry, ok := t.immutable.GetEntry(key); ok {
-            if entry.Tombstone {
-                return nil, false
-            }
-            return entry.Value, true
-        }
-    }
-    // ... SSTable search unchanged ...
-    return nil, false
-}
-```
+`Put`/`Delete` now hold the write lock only for the memtable write + atomic rotation
+(`rotateMemTable`). A background `flushWorker` goroutine performs the heavy I/O
+(Build SST, write file, OpenReader) without holding the lock. The lock is re-acquired
+briefly only to install the result into `t.levels` and clear `t.immutable`. `Get`
+also checks `t.immutable` (the in-flight memtable) so reads never miss data.
+`Close` stops the worker, drains any pending job, and flushes the active memtable
+synchronously before returning.
 
 ---
 

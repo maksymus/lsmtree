@@ -51,18 +51,29 @@ type sstableFile struct {
 	reader *sstable.Reader
 }
 
+// flushJob carries a frozen MemTable and its WAL to the background flush worker.
+type flushJob struct {
+	mem    *memtable.MemTable
+	oldWAL *walPkg.WAL
+}
+
 // LSMTree is a Log-Structured Merge Tree backed by a MemTable and leveled SSTables.
 //
-//	Memory:  MemTable (SkipList + WAL)
+//	Memory:  active MemTable (SkipList + WAL)
+//	         immutable MemTable (being flushed by background worker)
 //	Disk:    WAL | Level 0 SSTables  (unsorted, may overlap)
 //	              | Level 1 SSTables
 //	              | Level N SSTables  (merged, no overlap within a level)
 type LSMTree struct {
-	mu       sync.RWMutex
-	opts     Options
-	memTable *memtable.MemTable
-	wal      *walPkg.WAL      // current active WAL (held for lifecycle management)
-	levels   [][]*sstableFile // levels[i] = SSTables at level i, newest first
+	mu        sync.RWMutex
+	opts      Options
+	memTable  *memtable.MemTable
+	immutable *memtable.MemTable // frozen; being flushed by flushWorker
+	wal       *walPkg.WAL        // current active WAL
+	levels    [][]*sstableFile   // levels[i] = SSTables at level i, newest first
+	flushCh   chan flushJob       // capacity 1; at most one flush in flight at a time
+	done      chan struct{}       // closed by Close() to stop the worker
+	wg        sync.WaitGroup     // tracks the flush worker goroutine
 }
 
 // Open creates or opens the LSMTree rooted at opts.Dir.
@@ -97,6 +108,8 @@ func Open(opts Options) (*LSMTree, error) {
 		memTable: mem,
 		wal:      w,
 		levels:   make([][]*sstableFile, opts.MaxLevels),
+		flushCh:  make(chan flushJob, 1),
+		done:     make(chan struct{}),
 	}
 
 	// Replay any WAL files from a previous crash.
@@ -109,11 +122,14 @@ func Open(opts Options) (*LSMTree, error) {
 		return nil, err
 	}
 
+	t.wg.Add(1)
+	go t.flushWorker()
+
 	return t, nil
 }
 
-// Put stores key → value. If the MemTable exceeds MemTableSize it is flushed to a
-// new Level-0 SSTable, possibly triggering a compaction.
+// Put stores key → value. If the MemTable exceeds MemTableSize and no flush is
+// already in progress, it is rotated out to the background flush worker.
 func (t *LSMTree) Put(key, value []byte) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -121,9 +137,8 @@ func (t *LSMTree) Put(key, value []byte) error {
 	if err := t.memTable.Set(key, value); err != nil {
 		return err
 	}
-
-	if t.memTable.Size() >= t.opts.MemTableSize {
-		return t.flush()
+	if t.memTable.Size() >= t.opts.MemTableSize && t.immutable == nil {
+		t.rotateMemTable()
 	}
 	return nil
 }
@@ -134,7 +149,13 @@ func (t *LSMTree) Delete(key []byte) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	return t.memTable.Delete(key)
+	if err := t.memTable.Delete(key); err != nil {
+		return err
+	}
+	if t.memTable.Size() >= t.opts.MemTableSize && t.immutable == nil {
+		t.rotateMemTable()
+	}
+	return nil
 }
 
 // Get returns the value for key and true if found, or nil and false if the key
@@ -143,12 +164,22 @@ func (t *LSMTree) Get(key []byte) ([]byte, bool) {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 
-	// MemTable has the freshest data.
+	// Active MemTable has the freshest data.
 	if entry, ok := t.memTable.GetEntry(key); ok {
 		if entry.Tombstone {
 			return nil, false
 		}
 		return entry.Value, true
+	}
+
+	// Immutable MemTable is older than active but newer than any SSTable.
+	if t.immutable != nil {
+		if entry, ok := t.immutable.GetEntry(key); ok {
+			if entry.Tombstone {
+				return nil, false
+			}
+			return entry.Value, true
+		}
 	}
 
 	// Search SSTables level by level (L0 first = newest data).
@@ -170,16 +201,30 @@ func (t *LSMTree) Get(key []byte) ([]byte, bool) {
 	return nil, false
 }
 
-// Close flushes any remaining MemTable data to disk and releases resources.
+// Close stops the background flush worker, ensures all data is flushed to disk,
+// closes all SSTable readers, and releases the WAL.
 func (t *LSMTree) Close() error {
+	// Signal the worker to stop and wait for any in-progress flush to finish.
+	close(t.done)
+	t.wg.Wait()
+
+	// If the worker exited before picking up a pending job, process it now.
+	select {
+	case job := <-t.flushCh:
+		t.processFlush(job)
+	default:
+	}
+
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
+	// Flush any data remaining in the active MemTable.
 	if t.memTable.Size() > 0 {
 		if err := t.flush(); err != nil {
 			return err
 		}
 	}
+
 	for _, level := range t.levels {
 		for _, sst := range level {
 			sst.reader.Close()
@@ -188,9 +233,90 @@ func (t *LSMTree) Close() error {
 	return t.wal.Close()
 }
 
-// flush writes the active MemTable to a new Level-0 SSTable file, then creates a
-// fresh MemTable with a new WAL. The old WAL file is deleted since its data is
-// now durably stored in the SSTable. Must be called with t.mu held.
+// rotateMemTable atomically swaps the active MemTable for a fresh one and hands
+// the old one to the background flush worker. Must be called with t.mu held.
+// The caller must have verified t.immutable == nil before calling.
+func (t *LSMTree) rotateMemTable() {
+	oldWAL := t.wal
+	newWAL, err := walPkg.Create(t.opts.Dir)
+	if err != nil {
+		return // WAL creation failed; skip rotation, memtable continues to grow
+	}
+	t.immutable = t.memTable
+	t.wal = newWAL
+	t.memTable = memtable.NewMemTable(t.opts.Dir, defaultSkipListLevel, newWAL)
+	t.flushCh <- flushJob{mem: t.immutable, oldWAL: oldWAL}
+}
+
+// flushWorker runs in a background goroutine and processes flush jobs one at a time.
+func (t *LSMTree) flushWorker() {
+	defer t.wg.Done()
+	for {
+		select {
+		case job := <-t.flushCh:
+			t.processFlush(job)
+		case <-t.done:
+			return
+		}
+	}
+}
+
+// processFlush builds an SSTable from the frozen MemTable, writes it to disk, and
+// installs it into levels[0] — all without holding t.mu during the heavy I/O.
+// The write lock is acquired briefly at the end to update shared state.
+func (t *LSMTree) processFlush(job flushJob) {
+	entries := job.mem.Entries()
+	if len(entries) == 0 {
+		t.mu.Lock()
+		t.immutable = nil
+		t.mu.Unlock()
+		job.oldWAL.Delete()
+		return
+	}
+
+	// Build SST bytes — reading from the frozen immutable MemTable, no lock needed.
+	data, err := sstable.Build(entries, t.opts.BlockSize, 0)
+	if err != nil {
+		t.mu.Lock()
+		t.immutable = nil
+		t.mu.Unlock()
+		return
+	}
+
+	// Write SST file to disk — no lock needed.
+	path, err := t.writeSSTFile(0, data)
+	if err != nil {
+		t.mu.Lock()
+		t.immutable = nil
+		t.mu.Unlock()
+		return
+	}
+
+	// Open reader — no lock needed.
+	reader, err := sstable.OpenReader(path)
+	if err != nil {
+		os.Remove(path)
+		t.mu.Lock()
+		t.immutable = nil
+		t.mu.Unlock()
+		return
+	}
+
+	// Install the new SSTable and clear the immutable pointer under the write lock.
+	t.mu.Lock()
+	t.levels[0] = append([]*sstableFile{{path: path, level: 0, reader: reader}}, t.levels[0]...)
+	t.immutable = nil
+	if len(t.levels[0]) >= t.opts.L0CompactThresh {
+		_ = t.compact(0)
+	}
+	t.mu.Unlock()
+
+	job.oldWAL.Delete()
+}
+
+// flush is the synchronous path used only by Close(): it writes the active
+// MemTable to a new L0 SSTable, rotates the WAL, and triggers compaction if needed.
+// Must be called with t.mu held.
 func (t *LSMTree) flush() error {
 	entries := t.memTable.Entries()
 	if len(entries) == 0 {

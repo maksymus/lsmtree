@@ -191,7 +191,6 @@ func TestLSMTree_CascadeCompaction(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	defer tree.Close()
 
 	// Write enough entries to force multiple L0→L1 compactions and therefore
 	// cascade into L2.
@@ -204,20 +203,13 @@ func TestLSMTree_CascadeCompaction(t *testing.T) {
 		}
 	}
 
-	// Every key must be readable regardless of how many cascade compactions occurred.
-	for i := 0; i < n; i++ {
-		key := []byte(fmt.Sprintf("key%03d", i))
-		want := []byte(fmt.Sprintf("val%03d", i))
-		got, ok := tree.Get(key)
-		if !ok {
-			t.Fatalf("Get %s: not found", key)
-		}
-		if !bytes.Equal(got, want) {
-			t.Fatalf("Get %s: got %q, want %q", key, got, want)
-		}
+	// Close explicitly so the background flush worker finishes and all
+	// compactions complete before we inspect the level structure.
+	if err := tree.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
 	}
 
-	// Verify data has been pushed beyond L1: at least one level ≥ 2 must be non-empty.
+	// tree.levels is still readable after Close (slices intact, readers closed).
 	hasDeepLevel := false
 	for i := 2; i < opts.MaxLevels; i++ {
 		if len(tree.levels[i]) > 0 {
@@ -227,5 +219,23 @@ func TestLSMTree_CascadeCompaction(t *testing.T) {
 	}
 	if !hasDeepLevel {
 		t.Fatal("expected cascade compaction to produce SSTables at level ≥ 2")
+	}
+
+	// Reopen and verify every key survived the cascade compaction.
+	tree2, err := Open(opts)
+	if err != nil {
+		t.Fatalf("Reopen: %v", err)
+	}
+	defer tree2.Close()
+	for i := 0; i < n; i++ {
+		key := []byte(fmt.Sprintf("key%03d", i))
+		want := []byte(fmt.Sprintf("val%03d", i))
+		got, ok := tree2.Get(key)
+		if !ok {
+			t.Fatalf("Get %s after reopen: not found", key)
+		}
+		if !bytes.Equal(got, want) {
+			t.Fatalf("Get %s after reopen: got %q, want %q", key, got, want)
+		}
 	}
 }
