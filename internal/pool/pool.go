@@ -1,4 +1,4 @@
-package util
+package pool
 
 import (
 	"bytes"
@@ -27,8 +27,7 @@ func NewSyncPool[T any](newFunc func() T, resetFunc func(T)) *SyncPool[T] {
 }
 
 func (p *SyncPool[T]) Get() T {
-	elem := p.pool.Get().(T)
-	return elem
+	return p.pool.Get().(T)
 }
 
 func (p *SyncPool[T]) Put(item T) {
@@ -36,7 +35,6 @@ func (p *SyncPool[T]) Put(item T) {
 	if value.Kind() == reflect.Ptr && value.IsNil() {
 		return
 	}
-
 	if p.resetFunc != nil {
 		p.resetFunc(item)
 	}
@@ -46,11 +44,8 @@ func (p *SyncPool[T]) Put(item T) {
 func NewBytesBufferPool() *BytesBufferPool {
 	return &BytesBufferPool{
 		SyncPool: *NewSyncPool(
-			func() *bytes.Buffer {
-				return new(bytes.Buffer)
-			},
-			func(buf *bytes.Buffer) {
-				buf.Reset()
-			}),
+			func() *bytes.Buffer { return new(bytes.Buffer) },
+			func(buf *bytes.Buffer) { buf.Reset() },
+		),
 	}
 }

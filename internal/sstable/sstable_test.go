@@ -4,22 +4,14 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/maksymus/lmstree/util"
+	"github.com/maksymus/lmstree/entry"
 )
 
 func TestIndexBlock_EncodeDecode(t *testing.T) {
 	original := &IndexBlock{
 		entries: []*IndexEntry{
-			{
-				startKey: []byte("a"),
-				endKey:   []byte("b"),
-				block:    Block{offset: 0, length: 100},
-			},
-			{
-				startKey: []byte("c"),
-				endKey:   []byte("d"),
-				block:    Block{offset: 100, length: 200},
-			},
+			{startKey: []byte("a"), endKey: []byte("b"), block: Block{offset: 0, length: 100}},
+			{startKey: []byte("c"), endKey: []byte("d"), block: Block{offset: 100, length: 200}},
 		},
 	}
 
@@ -37,12 +29,10 @@ func TestIndexBlock_EncodeDecode(t *testing.T) {
 		t.Fatalf("Expected %d entries, got %d", len(original.entries), len(decoded.entries))
 	}
 
-	for i, entry := range original.entries {
-		decodedEntry := decoded.entries[i]
-		if !bytes.Equal(entry.startKey, decodedEntry.startKey) ||
-			!bytes.Equal(entry.endKey, decodedEntry.endKey) ||
-			entry.block != decodedEntry.block {
-			t.Errorf("Entry %d mismatch: expected %+v, got %+v", i, entry, decodedEntry)
+	for i, e := range original.entries {
+		de := decoded.entries[i]
+		if !bytes.Equal(e.startKey, de.startKey) || !bytes.Equal(e.endKey, de.endKey) || e.block != de.block {
+			t.Errorf("Entry %d mismatch: expected %+v, got %+v", i, e, de)
 		}
 	}
 }
@@ -73,7 +63,7 @@ func TestFooter_EncodeDecode(t *testing.T) {
 
 func TestDataBlock_EncodeDecode(t *testing.T) {
 	original := &DataBlock{
-		entries: []*util.Entry{
+		entries: []*entry.Entry{
 			{Key: []byte("key1"), Value: []byte("value1"), Tombstone: false},
 			{Key: []byte("key2"), Value: []byte("value2"), Tombstone: true},
 		},
@@ -93,21 +83,16 @@ func TestDataBlock_EncodeDecode(t *testing.T) {
 		t.Fatalf("Expected %d entries, got %d", len(original.entries), len(decoded.entries))
 	}
 
-	for i, entry := range original.entries {
-		decodedEntry := decoded.entries[i]
-		if !bytes.Equal(entry.Key, decodedEntry.Key) ||
-			!bytes.Equal(entry.Value, decodedEntry.Value) ||
-			entry.Tombstone != decodedEntry.Tombstone {
-			t.Errorf("Entry %d mismatch: expected %+v, got %+v", i, entry, decodedEntry)
+	for i, e := range original.entries {
+		de := decoded.entries[i]
+		if !bytes.Equal(e.Key, de.Key) || !bytes.Equal(e.Value, de.Value) || e.Tombstone != de.Tombstone {
+			t.Errorf("Entry %d mismatch: expected %+v, got %+v", i, e, de)
 		}
 	}
 }
 
 func TestMetaBlock_EncodeDecode(t *testing.T) {
-	meta := &MetaBlock{
-		createdAt: 1625077800,
-		level:     1,
-	}
+	meta := &MetaBlock{createdAt: 1625077800, level: 1}
 
 	data, err := meta.Encode()
 	if err != nil {
@@ -129,7 +114,7 @@ func TestMetaBlock_EncodeDecode(t *testing.T) {
 
 func TestDataBlock_Search(t *testing.T) {
 	db := &DataBlock{
-		entries: []*util.Entry{
+		entries: []*entry.Entry{
 			{Key: []byte("apple"), Value: []byte("fruit")},
 			{Key: []byte("banana"), Value: []byte("fruit")},
 			{Key: []byte("carrot"), Value: []byte("vegetable")},
@@ -138,24 +123,22 @@ func TestDataBlock_Search(t *testing.T) {
 
 	tests := []struct {
 		key      []byte
-		expected *util.Entry
+		expected *entry.Entry
 		found    bool
 	}{
-		{key: []byte("apple"), expected: &util.Entry{Key: []byte("apple"), Value: []byte("fruit")}, found: true},
-		{key: []byte("banana"), expected: &util.Entry{Key: []byte("banana"), Value: []byte("fruit")}, found: true},
-		{key: []byte("carrot"), expected: &util.Entry{Key: []byte("carrot"), Value: []byte("vegetable")}, found: true},
-		{key: []byte("date"), expected: nil, found: false},
+		{[]byte("apple"), &entry.Entry{Key: []byte("apple"), Value: []byte("fruit")}, true},
+		{[]byte("banana"), &entry.Entry{Key: []byte("banana"), Value: []byte("fruit")}, true},
+		{[]byte("carrot"), &entry.Entry{Key: []byte("carrot"), Value: []byte("vegetable")}, true},
+		{[]byte("date"), nil, false},
 	}
+
 	for _, tt := range tests {
-		entry, found := db.Search(tt.key)
+		e, found := db.Search(tt.key)
 		if found != tt.found {
 			t.Errorf("Search(%s) found = %v; want %v", tt.key, found, tt.found)
 		}
-		if found && !bytes.Equal(entry.Key, tt.expected.Key) {
-			t.Errorf("Search(%s) key = %s; want %s", tt.key, entry.Key, tt.expected.Key)
-		}
-		if found && !bytes.Equal(entry.Value, tt.expected.Value) {
-			t.Errorf("Search(%s) value = %s; want %s", tt.key, entry.Value, tt.expected.Value)
+		if found && !bytes.Equal(e.Key, tt.expected.Key) {
+			t.Errorf("Search(%s) key = %s; want %s", tt.key, e.Key, tt.expected.Key)
 		}
 	}
 }
@@ -173,10 +156,11 @@ func TestIndexBlock_Search(t *testing.T) {
 		expected Block
 		found    bool
 	}{
-		{key: []byte("b"), expected: Block{offset: 0, length: 100}, found: true},
-		{key: []byte("e"), expected: Block{offset: 100, length: 200}, found: true},
-		{key: []byte("g"), expected: Block{}, found: false},
+		{[]byte("b"), Block{offset: 0, length: 100}, true},
+		{[]byte("e"), Block{offset: 100, length: 200}, true},
+		{[]byte("g"), Block{}, false},
 	}
+
 	for _, tt := range tests {
 		block, found := ib.Search(tt.key)
 		if found != tt.found {
@@ -189,7 +173,7 @@ func TestIndexBlock_Search(t *testing.T) {
 }
 
 func Test_Build(t *testing.T) {
-	entries := []*util.Entry{
+	entries := []*entry.Entry{
 		{Key: []byte("apple"), Value: []byte("fruit")},
 		{Key: []byte("banana"), Value: []byte("fruit")},
 		{Key: []byte("carrot"), Value: []byte("vegetable")},
@@ -201,19 +185,18 @@ func Test_Build(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Build failed: %v", err)
 	}
-
 	if len(data) == 0 {
-		t.Fatalf("Build returned empty data")
+		t.Fatal("Build returned empty data")
 	}
 }
 
 func Test_Merge(t *testing.T) {
-	entries1 := []*util.Entry{
+	entries1 := []*entry.Entry{
 		{Key: []byte("apple"), Value: []byte("fruit")},
 		{Key: []byte("fig"), Value: []byte("fruit")},
 		{Key: []byte("grape"), Value: []byte("fruit")},
 	}
-	entries2 := []*util.Entry{
+	entries2 := []*entry.Entry{
 		{Key: []byte("banana"), Value: []byte("fruit")},
 		{Key: []byte("carrot"), Value: []byte("vegetable")},
 		{Key: []byte("date"), Value: []byte("fruit")},
@@ -225,7 +208,7 @@ func Test_Merge(t *testing.T) {
 		t.Fatalf("Merge failed: %v", err)
 	}
 
-	expectedKeys := []*util.Entry{
+	expected := []*entry.Entry{
 		{Key: []byte("apple"), Value: []byte("fruit")},
 		{Key: []byte("banana"), Value: []byte("fruit")},
 		{Key: []byte("carrot"), Value: []byte("vegetable")},
@@ -235,29 +218,28 @@ func Test_Merge(t *testing.T) {
 		{Key: []byte("grape"), Value: []byte("fruit")},
 	}
 
-	if len(mergedData) != len(expectedKeys) {
-		t.Fatalf("Expected %d entries, got %d", len(expectedKeys), len(mergedData))
+	if len(mergedData) != len(expected) {
+		t.Fatalf("Expected %d entries, got %d", len(expected), len(mergedData))
 	}
 
-	for i, entry := range mergedData {
-		if !bytes.Equal(entry.Key, expectedKeys[i].Key) || !bytes.Equal(entry.Value, expectedKeys[i].Value) {
-			t.Errorf("Entry %d mismatch: expected %+v, got %+v", i, expectedKeys[i], entry)
+	for i, e := range mergedData {
+		if !bytes.Equal(e.Key, expected[i].Key) || !bytes.Equal(e.Value, expected[i].Value) {
+			t.Errorf("Entry %d mismatch: expected %+v, got %+v", i, expected[i], e)
 		}
 	}
 }
 
 func Test_MergeDuplicateKeys(t *testing.T) {
-	entries1 := []*util.Entry{
+	entries1 := []*entry.Entry{
 		{Key: []byte("apple"), Value: []byte("apple1")},
 		{Key: []byte("banana"), Value: []byte("banana1")},
 		{Key: []byte("mango"), Value: []byte("mango1")},
 	}
-	entries2 := []*util.Entry{
+	entries2 := []*entry.Entry{
 		{Key: []byte("banana"), Value: []byte("banana2")},
 		{Key: []byte("carrot"), Value: []byte("carrot2")},
 	}
-
-	entries3 := []*util.Entry{
+	entries3 := []*entry.Entry{
 		{Key: []byte("apple"), Value: []byte("apple3")},
 		{Key: []byte("banana"), Value: []byte("banana3")},
 	}
@@ -267,20 +249,20 @@ func Test_MergeDuplicateKeys(t *testing.T) {
 		t.Fatalf("Merge failed: %v", err)
 	}
 
-	expectedKeys := []*util.Entry{
+	expected := []*entry.Entry{
 		{Key: []byte("apple"), Value: []byte("apple3")},
 		{Key: []byte("banana"), Value: []byte("banana3")},
 		{Key: []byte("carrot"), Value: []byte("carrot2")},
 		{Key: []byte("mango"), Value: []byte("mango1")},
 	}
 
-	if len(mergedData) != len(expectedKeys) {
-		t.Fatalf("Expected %d entries, got %d", len(expectedKeys), len(mergedData))
+	if len(mergedData) != len(expected) {
+		t.Fatalf("Expected %d entries, got %d", len(expected), len(mergedData))
 	}
 
-	for i, entry := range mergedData {
-		if !bytes.Equal(entry.Key, expectedKeys[i].Key) || !bytes.Equal(entry.Value, expectedKeys[i].Value) {
-			t.Errorf("Entry %d mismatch: expected %+v, got %+v", i, expectedKeys[i], entry)
+	for i, e := range mergedData {
+		if !bytes.Equal(e.Key, expected[i].Key) || !bytes.Equal(e.Value, expected[i].Value) {
+			t.Errorf("Entry %d mismatch: expected %+v, got %+v", i, expected[i], e)
 		}
 	}
 }

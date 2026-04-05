@@ -5,7 +5,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/maksymus/lmstree/wal"
+	"github.com/maksymus/lmstree/internal/wal"
 )
 
 func TestNewMemTable(t *testing.T) {
@@ -14,7 +14,6 @@ func TestNewMemTable(t *testing.T) {
 		t.Fatal("expected non-nil MemTable")
 	}
 
-	// Should be able to set and get immediately after creation
 	if err := mt.Set([]byte("k"), []byte("v")); err != nil {
 		t.Fatalf("Set on new MemTable: %v", err)
 	}
@@ -66,7 +65,6 @@ func TestMemTable_Get_Found(t *testing.T) {
 
 func TestMemTable_Get_NotFound(t *testing.T) {
 	mt := NewMemTable("/tmp", 5, &wal.NoopWAL{})
-
 	_, ok := mt.Get([]byte("missing"))
 	if ok {
 		t.Fatal("expected key to not be found")
@@ -81,21 +79,17 @@ func TestMemTable_ConcurrentSetGet(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(goroutines * 2)
 
-	// Writers
 	for g := 0; g < goroutines; g++ {
 		go func(id int) {
 			defer wg.Done()
 			for i := 0; i < iterations; i++ {
-				key := []byte("key")
-				value := []byte("value")
-				if err := mt.Set(key, value); err != nil {
+				if err := mt.Set([]byte("key"), []byte("value")); err != nil {
 					t.Errorf("goroutine %d: Set error: %v", id, err)
 				}
 			}
 		}(g)
 	}
 
-	// Readers
 	for g := 0; g < goroutines; g++ {
 		go func(id int) {
 			defer wg.Done()

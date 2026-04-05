@@ -1,4 +1,4 @@
-package util
+package heap
 
 import (
 	"container/heap"
@@ -6,9 +6,6 @@ import (
 	"testing"
 )
 
-// BenchmarkHeap_BuildAndDrain measures the cost to build a heap by pushing
-// N items and then draining (pop all). This exercises the allocation and
-// comparison behavior for bulk operations.
 func BenchmarkHeap_BuildAndDrain(b *testing.B) {
 	const N = 1024
 	vals := make([]int, N)
@@ -29,8 +26,6 @@ func BenchmarkHeap_BuildAndDrain(b *testing.B) {
 	}
 }
 
-// BenchmarkHeap_BuildByHeapify measures building a heap by pre-filling the
-// backing slice and calling heap.Init, which performs an O(n) heap build.
 func BenchmarkHeap_BuildByHeapify(b *testing.B) {
 	const N = 1024
 	vals := make([]int, N)
@@ -42,7 +37,6 @@ func BenchmarkHeap_BuildByHeapify(b *testing.B) {
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
 		h := NewHeapWithCapacity[int](N, func(a, b int) bool { return a < b })
-		// directly set the internal slice to avoid per-push work
 		h.inner.items = append(h.inner.items, vals...)
 		heap.Init(h.inner)
 		for h.Len() > 0 {
@@ -51,8 +45,6 @@ func BenchmarkHeap_BuildByHeapify(b *testing.B) {
 	}
 }
 
-// BenchmarkHeap_PushPop_Amortized keeps the heap size small by pushing and
-// immediately popping, measuring per-op cost without repeated growth.
 func BenchmarkHeap_PushPop_Amortized(b *testing.B) {
 	const K = 256
 	vals := make([]int, K)
@@ -70,8 +62,6 @@ func BenchmarkHeap_PushPop_Amortized(b *testing.B) {
 	}
 }
 
-// BenchmarkHeap_Peek measures the cost of repeated Peek calls on a
-// populated heap. Peek should be cheap and allocation-free.
 func BenchmarkHeap_Peek(b *testing.B) {
 	const N = 1024
 	vals := make([]int, N)

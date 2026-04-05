@@ -1,31 +1,29 @@
-package util
+package skiplist
 
 import (
 	"bytes"
 	"math/rand"
+
+	"github.com/maksymus/lmstree/entry"
 )
 
-// SkipList represents a skip list data structure.
-// It is a probabilistic data structure that allows for fast search, insert, and delete operations.
-// A skip list consists of multiple levels of linked lists, where each level is a subset of the elements in the lower level.
-// The top level has the fewest elements, and each subsequent level has more elements.
-// The skip list uses randomization to determine the level of each new node, allowing for efficient traversal.
+// SkipList is a probabilistic data structure for sorted key-value storage.
 type SkipList struct {
-	head         *SkipListNode // head is the top-level header node of the skip list.
-	maxLevel     int           // maxLevel is the maximum level of the skip list.
-	currentLevel int           // currentLevel is the current level of the skip list.
-	length       int           // length is the number of elements in the skip list.
-	rand         *rand.Rand    // rand is a random number generator used to determine the level of new nodes.
+	head         *SkipListNode
+	maxLevel     int
+	currentLevel int
+	length       int
+	rand         *rand.Rand
 }
 
-// SkipListNode represents a node in the skip list.
+// SkipListNode is a node in the skip list.
 type SkipListNode struct {
-	Entry
-	forward []*SkipListNode // forward is an array of pointers to the next nodes at each level.
-	level   int             // level is the level of the node in the skip list.
+	entry.Entry
+	forward []*SkipListNode
+	level   int
 }
 
-// NewSkipList creates a new skip list with the specified maximum level and random number generator.
+// NewSkipList creates a new skip list with the specified maximum level.
 func NewSkipList(maxLevel int, rand *rand.Rand) *SkipList {
 	return &SkipList{
 		head:         &SkipListNode{forward: make([]*SkipListNode, maxLevel)},
@@ -39,15 +37,11 @@ func NewSkipList(maxLevel int, rand *rand.Rand) *SkipList {
 // Insert adds a new Key-Value pair to the skip list.
 func (sl *SkipList) Insert(key []byte, value []byte) {
 	node := &SkipListNode{
-		Entry: Entry{
-			Key:   key,
-			Value: value,
-		},
+		Entry:   entry.Entry{Key: key, Value: value},
 		forward: make([]*SkipListNode, sl.maxLevel),
 		level:   0,
 	}
 
-	// Determine the level of the new node.
 	for i := 0; i < sl.maxLevel-1; i++ {
 		if sl.rand.Intn(2) == 0 {
 			node.level++
@@ -74,7 +68,7 @@ func (sl *SkipList) Insert(key []byte, value []byte) {
 	sl.length++
 }
 
-// Get retrieves the Value associated with the given Key in the skip list.
+// Get retrieves the value associated with the given key.
 func (sl *SkipList) Get(key []byte) ([]byte, bool) {
 	current := sl.head
 	for i := sl.currentLevel; i >= 0; i-- {
@@ -89,7 +83,7 @@ func (sl *SkipList) Get(key []byte) ([]byte, bool) {
 	return zeroValue, false
 }
 
-// Delete removes the Key-Value pair associated with the given Key from the skip list.
+// Delete removes the key-value pair for the given key.
 func (sl *SkipList) Delete(key []byte) bool {
 	current := sl.head
 	found := false
@@ -111,7 +105,7 @@ func (sl *SkipList) Delete(key []byte) bool {
 	return false
 }
 
-// Update modifies the Value associated with the given Key in the skip list.
+// Update modifies the value for an existing key.
 func (sl *SkipList) Update(key []byte, value []byte) bool {
 	current := sl.head
 	found := false
@@ -129,7 +123,7 @@ func (sl *SkipList) Update(key []byte, value []byte) bool {
 	return found
 }
 
-// All returns all values in the skip list as a slice.
+// All returns all values in sorted key order.
 func (sl *SkipList) All() [][]byte {
 	values := make([][]byte, 0, sl.length)
 	current := sl.head.forward[0]
@@ -140,7 +134,7 @@ func (sl *SkipList) All() [][]byte {
 	return values
 }
 
-// Reset clears the skip list, removing all elements and resetting its state.
+// Reset clears the skip list.
 func (sl *SkipList) Reset() {
 	sl.head = &SkipListNode{forward: make([]*SkipListNode, sl.maxLevel)}
 	sl.currentLevel = 0
@@ -148,30 +142,23 @@ func (sl *SkipList) Reset() {
 }
 
 // InsertEntry upserts an Entry into the skip list.
-// If the key already exists the existing node is updated in place, so a search
-// starting from any level always finds the current value. If the key is new a
-// fresh node is inserted at a random level.
-func (sl *SkipList) InsertEntry(entry *Entry) {
-	// Record the rightmost predecessor at each level (needed for new-node wiring).
+func (sl *SkipList) InsertEntry(e *entry.Entry) {
 	update := make([]*SkipListNode, sl.maxLevel)
 	current := sl.head
 	for i := sl.currentLevel; i >= 0; i-- {
-		for current.forward[i] != nil && bytes.Compare(current.forward[i].Key, entry.Key) < 0 {
+		for current.forward[i] != nil && bytes.Compare(current.forward[i].Key, e.Key) < 0 {
 			current = current.forward[i]
 		}
 		update[i] = current
 	}
 
-	// If the key already exists at level 0, update in place and return.
-	// Level 0 contains every node, so this is the authoritative check.
-	if next := update[0].forward[0]; next != nil && bytes.Equal(next.Key, entry.Key) {
-		next.Entry = *entry
+	if next := update[0].forward[0]; next != nil && bytes.Equal(next.Key, e.Key) {
+		next.Entry = *e
 		return
 	}
 
-	// Key not found — insert a new node at a random level.
 	node := &SkipListNode{
-		Entry:   *entry,
+		Entry:   *e,
 		forward: make([]*SkipListNode, sl.maxLevel),
 		level:   0,
 	}
@@ -196,7 +183,7 @@ func (sl *SkipList) InsertEntry(entry *Entry) {
 }
 
 // GetEntry retrieves the Entry (including tombstone status) for the given key.
-func (sl *SkipList) GetEntry(key []byte) (*Entry, bool) {
+func (sl *SkipList) GetEntry(key []byte) (*entry.Entry, bool) {
 	current := sl.head
 	for i := sl.currentLevel; i >= 0; i-- {
 		for current.forward[i] != nil && bytes.Compare(current.forward[i].Key, key) < 0 {
@@ -210,24 +197,23 @@ func (sl *SkipList) GetEntry(key []byte) (*Entry, bool) {
 	return nil, false
 }
 
-// Entries returns all entries in sorted key order with duplicates deduplicated
-// (the first occurrence in level-0 traversal is the newest value and wins).
-func (sl *SkipList) Entries() []*Entry {
-	entries := make([]*Entry, 0, sl.length)
+// Entries returns all entries in sorted key order, deduplicated.
+func (sl *SkipList) Entries() []*entry.Entry {
+	result := make([]*entry.Entry, 0, sl.length)
 	current := sl.head.forward[0]
 	var lastKey []byte
 	for current != nil {
 		if !bytes.Equal(current.Key, lastKey) {
 			e := current.Entry
-			entries = append(entries, &e)
+			result = append(result, &e)
 			lastKey = current.Key
 		}
 		current = current.forward[0]
 	}
-	return entries
+	return result
 }
 
-// LowerBound finds the smallest key in the skip list that is greater than or equal to the given key.
+// LowerBound finds the smallest key >= the given key.
 func (sl *SkipList) LowerBound(key []byte) ([]byte, bool) {
 	current := sl.head
 	for i := sl.currentLevel; i >= 0; i-- {

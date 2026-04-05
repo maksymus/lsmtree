@@ -9,8 +9,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/maksymus/lmstree/util"
-	walPkg "github.com/maksymus/lmstree/wal"
+	"github.com/maksymus/lmstree/entry"
+	"github.com/maksymus/lmstree/internal/skiplist"
+	walPkg "github.com/maksymus/lmstree/internal/wal"
 )
 
 // ErrReadonly is returned when a write is attempted on a readonly MemTable.
@@ -18,33 +19,24 @@ var ErrReadonly = errors.New("memtable is readonly")
 
 // WAL is the interface used by MemTable for write-ahead logging.
 type WAL interface {
-	Write(entries ...*util.Entry) error
+	Write(entries ...*entry.Entry) error
 	CompareVersion(version string) int
 }
 
-// MemTable represents an in-memory table with a skip list and a write-ahead log (WAL).
-// It supports concurrent access and can be set to read-only mode.
-// The MemTable uses a mutex to ensure thread-safe operations.
-// It contains a skip list for efficient key-value storage and retrieval,
-// and a WAL for durability and recovery in case of crashes.
+// MemTable represents an in-memory table with a skip list and a write-ahead log.
 type MemTable struct {
 	mutex    sync.Mutex
-	list     *util.SkipList
+	list     *skiplist.SkipList
 	wal      WAL
 	dir      string
 	size     int64
 	readonly bool
 }
 
-// NewMemTable creates a new MemTable with the specified directory, skip list level, and WAL implementation.
+// NewMemTable creates a new MemTable with the specified directory, skip list level, and WAL.
 func NewMemTable(dir string, level int, wal WAL) *MemTable {
-	list := util.NewSkipList(level, rand.New(rand.NewSource(time.Now().Unix())))
-
-	return &MemTable{
-		list: list,
-		wal:  wal,
-		dir:  dir,
-	}
+	list := skiplist.NewSkipList(level, rand.New(rand.NewSource(time.Now().Unix())))
+	return &MemTable{list: list, wal: wal, dir: dir}
 }
 
 // Set adds a key-value pair to the MemTable.
@@ -56,38 +48,31 @@ func (m *MemTable) Set(key, value []byte) error {
 		return ErrReadonly
 	}
 
-	entry := &util.Entry{
-		Key:   key,
-		Value: value,
-	}
-
-	if err := m.wal.Write(entry); err != nil {
+	e := &entry.Entry{Key: key, Value: value}
+	if err := m.wal.Write(e); err != nil {
 		return err
 	}
-
-	m.list.InsertEntry(entry)
+	m.list.InsertEntry(e)
 	m.size += int64(len(key) + len(value))
 	return nil
 }
 
-// Get retrieves the value associated with the given key from the MemTable.
-// It does not expose tombstone status; use GetEntry for that.
+// Get retrieves the value for the given key. Does not expose tombstone status.
 func (m *MemTable) Get(key []byte) ([]byte, bool) {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 
-	entry, ok := m.list.GetEntry(key)
-	if !ok || entry.Tombstone {
+	e, ok := m.list.GetEntry(key)
+	if !ok || e.Tombstone {
 		return nil, false
 	}
-	return entry.Value, true
+	return e.Value, true
 }
 
 // GetEntry retrieves the full Entry for the given key, including tombstone status.
-func (m *MemTable) GetEntry(key []byte) (*util.Entry, bool) {
+func (m *MemTable) GetEntry(key []byte) (*entry.Entry, bool) {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
-
 	return m.list.GetEntry(key)
 }
 
@@ -100,12 +85,12 @@ func (m *MemTable) Delete(key []byte) error {
 		return ErrReadonly
 	}
 
-	entry := &util.Entry{Key: key, Value: []byte{}, Tombstone: true}
-	if err := m.wal.Write(entry); err != nil {
+	e := &entry.Entry{Key: key, Value: []byte{}, Tombstone: true}
+	if err := m.wal.Write(e); err != nil {
 		return err
 	}
-	m.list.InsertEntry(entry)
-	m.size += int64(len(key) + 1) // count tombstone toward flush threshold
+	m.list.InsertEntry(e)
+	m.size += int64(len(key) + 1)
 	return nil
 }
 
@@ -113,19 +98,17 @@ func (m *MemTable) Delete(key []byte) error {
 func (m *MemTable) Size() int64 {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
-
 	return m.size
 }
 
-// Entries returns all entries in sorted key order, deduplicated (newest value wins).
-func (m *MemTable) Entries() []*util.Entry {
+// Entries returns all entries in sorted key order, deduplicated.
+func (m *MemTable) Entries() []*entry.Entry {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
-
 	return m.list.Entries()
 }
 
-// Recover replays the WAL files to restore the MemTable state after a crash.
+// Recover replays older WAL files to restore the MemTable state after a crash.
 func (m *MemTable) Recover() error {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
@@ -135,14 +118,12 @@ func (m *MemTable) Recover() error {
 		return err
 	}
 
-	// Filter WAL files
 	var files []string
 	for _, file := range dirs {
 		if version, err := walPkg.VersionFromFileName(file.Name()); err == nil {
 			if !file.IsDir() && m.wal.CompareVersion(version) < 0 {
 				files = append(files, file.Name())
 			}
-
 		}
 	}
 
@@ -150,10 +131,8 @@ func (m *MemTable) Recover() error {
 		return nil
 	}
 
-	// Sort WAL files by version (assuming version is numeric and increasing)
 	slices.Sort(files)
 
-	// Replay WAL files in order
 	for _, file := range files {
 		walFile, err := walPkg.Open(filepath.Join(m.dir, file))
 		if err != nil {
@@ -165,14 +144,13 @@ func (m *MemTable) Recover() error {
 			return err
 		}
 
-		// Replay entries into the skip list
-		for _, entry := range entries {
-			if err := m.wal.Write(entry); err != nil {
+		for _, e := range entries {
+			if err := m.wal.Write(e); err != nil {
 				return err
 			}
-			m.list.InsertEntry(entry)
-			if !entry.Tombstone {
-				m.size += int64(len(entry.Key) + len(entry.Value))
+			m.list.InsertEntry(e)
+			if !e.Tombstone {
+				m.size += int64(len(e.Key) + len(e.Value))
 			}
 		}
 

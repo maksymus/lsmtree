@@ -1,10 +1,10 @@
-package lmstree
+package main
 
 import (
 	"fmt"
 	"time"
 
-	"github.com/maksymus/lmstree/wal"
+	"github.com/maksymus/lmstree/internal/wal"
 )
 
 func main() {

@@ -13,7 +13,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/maksymus/lmstree/util"
+	"github.com/maksymus/lmstree/entry"
+	"github.com/maksymus/lmstree/internal/pool"
 )
 
 type WalFile interface {
@@ -23,31 +24,25 @@ type WalFile interface {
 	io.Closer
 }
 
-// WAL represents a Write-Ahead Log (WAL) for the LSM tree.
-// It is used to log changes before they are applied to the LSM tree.
-// The WAL is stored in a file and is used to recover the state of the LSM tree in case of a crash.
+// WAL represents a Write-Ahead Log for the LSM tree.
 type WAL struct {
-	mutex   sync.Mutex // Mutex to ensure thread-safe access to the WAL file.
-	file    WalFile    // File handle for the WAL file.
-	dir     string     // Directory where the WAL file is stored.
-	path    string     // Path to the WAL file.
-	version string     // Version of the WAL file, used to differentiate between different versions of the WAL.
-	pool    *util.BytesBufferPool
+	mutex   sync.Mutex
+	file    WalFile
+	dir     string
+	path    string
+	version string
+	pool    *pool.BytesBufferPool
 }
 
 func Create(dir string) (*WAL, error) {
-	// Create the WAL directory if it doesn't exist.
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return nil, err
 	}
 
 	createdAt := time.Now()
 	version := fmt.Sprintf("%s-%d", createdAt.Format("20060102150405"), createdAt.Nanosecond())
-
-	// Construct the path for the WAL file.
 	path := fmt.Sprintf("%s/wal-%s.log", dir, version)
 
-	// Open the WAL file for appending.
 	file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_RDWR, 0644)
 	if err != nil {
 		return nil, err
@@ -58,13 +53,11 @@ func Create(dir string) (*WAL, error) {
 		dir:     dir,
 		path:    path,
 		version: version,
-		pool:    util.NewBytesBufferPool(),
+		pool:    pool.NewBytesBufferPool(),
 	}, nil
 }
 
 func Open(path string) (*WAL, error) {
-
-	// Open the WAL file for reading and writing.
 	walFile, err := os.OpenFile(path, os.O_RDWR, 0644)
 	if err != nil {
 		return nil, err
@@ -74,12 +67,11 @@ func Open(path string) (*WAL, error) {
 		file: walFile,
 		dir:  filepath.Dir(path),
 		path: path,
-		//version: version,
-		pool: util.NewBytesBufferPool(),
+		pool: pool.NewBytesBufferPool(),
 	}, nil
 }
 
-func (w *WAL) Write(entries ...*util.Entry) error {
+func (w *WAL) Write(entries ...*entry.Entry) error {
 	w.mutex.Lock()
 	defer w.mutex.Unlock()
 
@@ -87,15 +79,14 @@ func (w *WAL) Write(entries ...*util.Entry) error {
 		return fmt.Errorf("WAL file is not open")
 	}
 
-	// Validate entries
-	for i, entry := range entries {
-		if entry == nil {
+	for i, e := range entries {
+		if e == nil {
 			return fmt.Errorf("entry at index %d is nil", i)
 		}
-		if len(entry.Key) == 0 {
+		if len(e.Key) == 0 {
 			return fmt.Errorf("entry at index %d has empty Key", i)
 		}
-		if len(entry.Value) == 0 && !entry.Tombstone {
+		if len(e.Value) == 0 && !e.Tombstone {
 			return fmt.Errorf("entry at index %d has empty Value", i)
 		}
 	}
@@ -103,19 +94,19 @@ func (w *WAL) Write(entries ...*util.Entry) error {
 	buffer := w.pool.Get()
 	defer w.pool.Put(buffer)
 
-	for _, entry := range entries {
-		keyLen, dataLen := len(entry.Key), len(entry.Value)
+	for _, e := range entries {
+		keyLen, dataLen := len(e.Key), len(e.Value)
 		if err := errors.Join(
-			binary.Write(buffer, binary.BigEndian, uint32(keyLen)),  // Key length
-			binary.Write(buffer, binary.BigEndian, uint32(dataLen)), // Value length
-			binary.Write(buffer, binary.BigEndian, entry.Key),       // Key
-			binary.Write(buffer, binary.BigEndian, entry.Value),     // Value
-			binary.Write(buffer, binary.BigEndian, entry.Tombstone), // Tombstone (deletion marker if any)
+			binary.Write(buffer, binary.BigEndian, uint32(keyLen)),
+			binary.Write(buffer, binary.BigEndian, uint32(dataLen)),
+			binary.Write(buffer, binary.BigEndian, e.Key),
+			binary.Write(buffer, binary.BigEndian, e.Value),
+			binary.Write(buffer, binary.BigEndian, e.Tombstone),
 		); err != nil {
 			return err
 		}
 
-		if buffer.Len() > 5*1024*1024 { // flush if buffer is larger than 5MB
+		if buffer.Len() > 5*1024*1024 {
 			if _, err := w.file.Write(buffer.Bytes()); err != nil {
 				return err
 			}
@@ -132,7 +123,7 @@ func (w *WAL) Write(entries ...*util.Entry) error {
 	return nil
 }
 
-func (w *WAL) Read() ([]*util.Entry, error) {
+func (w *WAL) Read() ([]*entry.Entry, error) {
 	w.mutex.Lock()
 	defer w.mutex.Unlock()
 
@@ -151,7 +142,7 @@ func (w *WAL) Read() ([]*util.Entry, error) {
 		return nil, err
 	}
 
-	var entries []*util.Entry
+	var entries []*entry.Entry
 	reader := bytes.NewReader(buffer.Bytes())
 	for {
 		var keyLen uint32
@@ -177,7 +168,7 @@ func (w *WAL) Read() ([]*util.Entry, error) {
 			return nil, err
 		}
 
-		entries = append(entries, &util.Entry{Key: key, Value: value, Tombstone: tombstone != 0})
+		entries = append(entries, &entry.Entry{Key: key, Value: value, Tombstone: tombstone != 0})
 	}
 
 	return entries, nil
@@ -194,7 +185,6 @@ func (w *WAL) Close() error {
 	if err := w.file.Close(); err != nil {
 		return err
 	}
-
 	w.file = nil
 	return nil
 }
@@ -210,11 +200,7 @@ func (w *WAL) Delete() error {
 		w.file = nil
 	}
 
-	if err := os.Remove(w.path); err != nil {
-		return err
-	}
-
-	return nil
+	return os.Remove(w.path)
 }
 
 func (w *WAL) CompareVersion(version string) int {
@@ -238,6 +224,5 @@ func VersionFromFileName(fileName string) (string, error) {
 	}
 
 	parts := strings.Split(strings.TrimSuffix(strings.TrimPrefix(fileName, "wal-"), ".log"), "-")
-
 	return fmt.Sprintf("%s-%s", parts[0], parts[1]), nil
 }

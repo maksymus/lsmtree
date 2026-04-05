@@ -3,14 +3,11 @@ package sstable
 import (
 	"testing"
 
-	"github.com/maksymus/lmstree/util"
+	"github.com/maksymus/lmstree/entry"
 )
 
 func BenchmarkMetaBlock_EncodeDecode(b *testing.B) {
-	meta := &MetaBlock{
-		createdAt: 1625077800,
-		level:     2,
-	}
+	meta := &MetaBlock{createdAt: 1625077800, level: 2}
 
 	b.Run("Encode", func(b *testing.B) {
 		for i := 0; i < b.N; i++ {
@@ -32,14 +29,8 @@ func BenchmarkMetaBlock_EncodeDecode(b *testing.B) {
 
 func BenchmarkFooter_EncodeDecode(b *testing.B) {
 	footer := &Footer{
-		meta: Block{
-			offset: 0,
-			length: 128,
-		},
-		index: Block{
-			offset: 128,
-			length: 256,
-		},
+		meta:  Block{offset: 0, length: 128},
+		index: Block{offset: 128, length: 256},
 	}
 
 	b.Run("Encode", func(b *testing.B) {
@@ -63,22 +54,8 @@ func BenchmarkFooter_EncodeDecode(b *testing.B) {
 func BenchmarkIndexBlock_EncodeDecode(b *testing.B) {
 	indexBlock := &IndexBlock{
 		entries: []*IndexEntry{
-			{
-				startKey: []byte("a"),
-				endKey:   []byte("m"),
-				block: Block{
-					offset: 0,
-					length: 128,
-				},
-			},
-			{
-				startKey: []byte("n"),
-				endKey:   []byte("z"),
-				block: Block{
-					offset: 128,
-					length: 256,
-				},
-			},
+			{startKey: []byte("a"), endKey: []byte("m"), block: Block{offset: 0, length: 128}},
+			{startKey: []byte("n"), endKey: []byte("z"), block: Block{offset: 128, length: 256}},
 		},
 	}
 
@@ -102,7 +79,7 @@ func BenchmarkIndexBlock_EncodeDecode(b *testing.B) {
 
 func BenchmarkDataBlock_EncodeDecode(b *testing.B) {
 	dataBlock := &DataBlock{
-		entries: []*util.Entry{
+		entries: []*entry.Entry{
 			{Key: []byte("apple"), Value: []byte("fruit")},
 			{Key: []byte("carrot"), Value: []byte("vegetable")},
 			{Key: []byte("banana"), Value: []byte("fruit")},

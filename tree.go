@@ -10,10 +10,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/maksymus/lmstree/memtable"
-	"github.com/maksymus/lmstree/sstable"
-	"github.com/maksymus/lmstree/util"
-	walPkg "github.com/maksymus/lmstree/wal"
+	"github.com/maksymus/lmstree/entry"
+	"github.com/maksymus/lmstree/internal/memtable"
+	"github.com/maksymus/lmstree/internal/sstable"
+	walPkg "github.com/maksymus/lmstree/internal/wal"
 )
 
 const (
@@ -367,7 +367,7 @@ func (t *LSMTree) compact(level int) error {
 
 	// Collect entry slices: level+1 first (lower priority), then current level
 	// oldest-first (so the newest L0 file gets the highest listIndex and wins).
-	var allEntries [][]*util.Entry
+	var allEntries [][]*entry.Entry
 
 	for _, sst := range t.levels[level+1] {
 		entries, err := sst.reader.Entries()

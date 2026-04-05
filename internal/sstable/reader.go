@@ -4,7 +4,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/maksymus/lmstree/util"
+	"github.com/maksymus/lmstree/entry"
+	"github.com/maksymus/lmstree/internal/bloom"
 )
 
 // footerSize is the fixed size in bytes of the SSTable footer (4 × uint64).
@@ -16,12 +17,11 @@ const footerSize = 32
 type Reader struct {
 	f     *os.File
 	size  int64
-	index *IndexBlock      // loaded once at open; used by Search and Entries
-	bloom *util.BloomFilter // decoded once at open; nil if absent
+	index *IndexBlock
+	bloom *bloom.BloomFilter
 }
 
-// OpenReader opens the SSTable at path and loads the footer, index block, and
-// bloom filter. Data blocks are read on demand.
+// OpenReader opens the SSTable at path and loads the footer, index, and bloom filter.
 func OpenReader(path string) (*Reader, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -38,7 +38,6 @@ func OpenReader(path string) (*Reader, error) {
 	}
 	r := &Reader{f: f, size: info.Size()}
 
-	// Read footer from the last footerSize bytes.
 	footerBuf := make([]byte, footerSize)
 	if _, err := f.ReadAt(footerBuf, info.Size()-int64(footerSize)); err != nil {
 		f.Close()
@@ -50,7 +49,6 @@ func OpenReader(path string) (*Reader, error) {
 		return nil, err
 	}
 
-	// Read and cache the index block.
 	indexBuf := make([]byte, footer.index.length)
 	if _, err := f.ReadAt(indexBuf, int64(footer.index.offset)); err != nil {
 		f.Close()
@@ -62,23 +60,19 @@ func OpenReader(path string) (*Reader, error) {
 		return nil, err
 	}
 
-	// Read and decode the meta block to get the bloom filter.
 	metaBuf := make([]byte, footer.meta.length)
 	if _, err := f.ReadAt(metaBuf, int64(footer.meta.offset)); err == nil {
 		meta := &MetaBlock{}
 		if err := meta.Decode(metaBuf); err == nil && len(meta.bloom) > 0 {
-			r.bloom, _ = util.DecodeBloomFilter(meta.bloom)
+			r.bloom, _ = bloom.Decode(meta.bloom)
 		}
 	}
 
 	return r, nil
 }
 
-// Search looks up key in the SSTable.
-// Returns the Entry (which may be a tombstone) and true if the key exists, or nil and false otherwise.
-// Callers must check entry.Tombstone to distinguish live entries from deletions.
-func (r *Reader) Search(key []byte) (*util.Entry, bool) {
-	// Fast path: bloom filter rules out keys that are definitely absent.
+// Search looks up key in the SSTable. Returns the Entry (may be tombstone) and true if found.
+func (r *Reader) Search(key []byte) (*entry.Entry, bool) {
 	if r.bloom != nil && !r.bloom.Contains(key) {
 		return nil, false
 	}
@@ -99,10 +93,9 @@ func (r *Reader) Search(key []byte) (*util.Entry, bool) {
 	return dataBlock.Search(key)
 }
 
-// Entries returns all entries stored in this SSTable in sorted key order,
-// including tombstone entries.
-func (r *Reader) Entries() ([]*util.Entry, error) {
-	var entries []*util.Entry
+// Entries returns all entries in sorted key order, including tombstones.
+func (r *Reader) Entries() ([]*entry.Entry, error) {
+	var entries []*entry.Entry
 	for _, ie := range r.index.entries {
 		buf := make([]byte, ie.block.length)
 		if _, err := r.f.ReadAt(buf, int64(ie.block.offset)); err != nil {
