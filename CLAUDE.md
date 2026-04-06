@@ -9,13 +9,13 @@ Go implementation of a Log-Structured Merge Tree (LSM Tree) for key-value storag
 ## Build & Test Commands
 
 ```bash
-go build ./...                    # Build all packages
-go test ./...                     # Run all tests
-go test -v ./sstable              # Run tests for a specific package
-go test -run TestDataBlock ./sstable  # Run a single test
-go test -bench=. ./util           # Run benchmarks for util package
-go test -bench=. ./sstable        # Run benchmarks for sstable package
-go test -benchmem -bench=. ./...  # Benchmarks with allocation reporting
+go build ./...                              # Build all packages
+go test ./...                              # Run all tests
+go test -v ./internal/sstable              # Run tests for a specific package
+go test -run TestDataBlock ./internal/sstable  # Run a single test
+go test -bench=. ./internal/heap           # Run benchmarks for heap package
+go test -bench=. ./internal/sstable        # Run benchmarks for sstable package
+go test -benchmem -bench=. ./...           # Benchmarks with allocation reporting
 ```
 
 ## Architecture
@@ -24,40 +24,49 @@ The LSM tree follows this layered design:
 
 ```
 Memory:  MemTable (SkipList + WAL)
-Disk:    WAL | Level 1 SSTables
-              | Level 2 SSTables
-              | Level 3 SSTables
+Disk:    WAL | Level 0 SSTables
+              | Level 1 SSTables
+              | Level N SSTables
 ```
 
 ### Packages
 
-- **Root package (`lmstree`)** — `MemTable` (memtable.go) and the top-level `LSMTree` struct (main.go/tree.go). LSMTree.Put/Get are stubbed; MemTable is functional with mutex-protected concurrent access, SkipList storage, and WAL durability.
+- **Root package (`lmstree`)** — public API split across three files:
+  - `options.go` — `Options`, `DefaultOptions`, shared constants
+  - `lsm.go` — `Open`, `Put`, `Get`, `Delete`, `Close`
+  - `tree.go` — `LSMTree` struct, internal types (`sstableFile`, `flushJob`), and all private methods (flush, compact, loadSSTables, etc.)
 
-- **`util/`** — Core data structures shared across packages:
-  - `Entry` — Key/value pair with tombstone flag; used everywhere as the unit of data
-  - `SkipList` — Sorted in-memory storage (O(log n) insert/search/delete)
-  - `Heap[T]` — Generic binary heap with custom comparator; used for k-way merge in SSTable
-  - `BloomFilter` — Probabilistic membership test using murmur3 hashing
-  - `SyncPool[T]` / `BytesBufferPool` — Object pooling to reduce allocations in hot paths
+- **`entry/`** — `Entry` struct (Key, Value, Tombstone + Size()). Zero internal dependencies; importable by any package including external consumers.
 
-- **`sstable/`** — Sorted String Table on-disk format:
-  - `DataBlock` — Sorted entries with binary encoding (key_len + value_len + key + value + tombstone)
-  - `IndexBlock` — Maps key ranges to DataBlock offsets for binary search lookup
-  - `MetaBlock` — Metadata (creation timestamp, level)
-  - `Footer` — Fixed-size trailer with offsets/lengths of Meta and Index blocks
-  - `Build()` — Constructs SSTable bytes from entries, splitting into DataBlocks by size
-  - `Merge()` — K-way merge of sorted entry lists using Heap; last-write-wins for duplicates, removes tombstones
+- **`cmd/lsmtree/`** — `package main` demo/CLI entry point.
 
-- **`wal/`** — Write-Ahead Log for crash recovery:
+- **`internal/bloom/`** — `BloomFilter` with murmur3 hashing, `Encode()` / `Decode()` for serialization into SSTable MetaBlock.
+
+- **`internal/heap/`** — Generic `Heap[T]` wrapping `container/heap`; used for k-way merge in SSTable and (future) iterators.
+
+- **`internal/pool/`** — `SyncPool[T]` / `BytesBufferPool` — object pooling to reduce allocations in hot paths (SSTable building, WAL writes).
+
+- **`internal/skiplist/`** — `SkipList` with `InsertEntry` / `GetEntry` / `Entries()` for tombstone-aware sorted storage.
+
+- **`internal/memtable/`** — `MemTable` (mutex-protected, SkipList-backed, WAL-durable). `Recover()` replays older WAL files on startup.
+
+- **`internal/sstable/`** — Sorted String Table on-disk format, split across files:
+  - `block.go` — `DataBlock`, `IndexBlock`, `MetaBlock`, `Footer`, `Block` handle, shared `bytesBufPool`
+  - `builder.go` — `Build()`: constructs SSTable bytes from entries, splits into DataBlocks by size, embeds bloom filter in MetaBlock
+  - `merge.go` — `Merge()`: k-way merge via `internal/heap`; last-write-wins for duplicates, drops tombstones
+  - `reader.go` — `Reader`: opens file once (footer + index + bloom), fetches data blocks on demand via `ReadAt`
+
+- **`internal/wal/`** — Write-Ahead Log:
   - WAL files named `wal-{timestamp}-{nanoseconds}.log` with version-based ordering
   - Buffered writes with 5MB flush threshold
-  - `MemTable.Recover()` replays older WAL files in chronological order
-  - `WalFile` interface (`io.Reader + Writer + Seeker + Closer`) decouples WAL from `*os.File` — tests use `InMemoryWalFile` (in wal_test.go) to avoid disk I/O
+  - `WalFile` interface decouples WAL from `*os.File`; tests use `InMemoryWalFile`
+  - `NoopWAL` for testing without durability
 
 ### Key Patterns
 
-- **Binary encoding**: All blocks use `encoding/binary.BigEndian` consistently. Every block type implements `Encode() ([]byte, error)` and `Decode([]byte) error`.
+- **Binary encoding**: All blocks use `encoding/binary.BigEndian`. Every block type implements `Encode() ([]byte, error)` and `Decode([]byte) error`. `Encode` returns `bytes.Clone(buffer.Bytes())` to avoid pool use-after-free.
 - **Buffer pooling**: `BytesBufferPool` (via `SyncPool`) is used in SSTable building and WAL writes to reduce GC pressure.
-- **Concurrency**: MemTable and WAL use `sync.Mutex` for thread safety.
-- **Generics**: `Heap[T]` and `SyncPool[T]` use Go generics with comparator/reset functions.
-- **Testing**: Table-driven tests, concurrent access tests (e.g., pool with 100 goroutines), mock implementations (InMemoryWalFile in wal_test.go), and separate `_bench_test.go` files with `b.ReportAllocs()`.
+- **Concurrency**: `LSMTree` uses `sync.RWMutex`; MemTable and WAL use `sync.Mutex`. Background flush worker communicates via a buffered channel (`flushCh`, capacity 1).
+- **Background flush**: `Put`/`Delete` hold the write lock only for the memtable write + `rotateMemTable`. The `flushWorker` goroutine does all I/O without the lock.
+- **Generics**: `Heap[T]` and `SyncPool[T]` use Go generics.
+- **Testing**: Table-driven tests, concurrent access tests, `InMemoryWalFile` mock, separate `_bench_test.go` files with `b.ReportAllocs()`.

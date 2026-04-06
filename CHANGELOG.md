@@ -2,10 +2,17 @@
 
 ## [Unreleased]
 
+### Refactored
+- **Project restructured into `internal/` packages** — `util/` split into `internal/bloom`, `internal/heap`, `internal/pool`, `internal/skiplist`; `memtable/`, `sstable/`, `wal/` moved to `internal/`; prevents external consumers from coupling to implementation details
+- **`entry.Entry` extracted to top-level `entry/` package** — zero-dependency type importable without pulling in any internal packages
+- **`tree.go` split into three files** — `options.go` (Options, DefaultOptions, constants), `lsm.go` (Open, Put, Get, Delete, Close), `tree.go` (LSMTree struct and private methods)
+- **`sstable` block files consolidated** — `data.go`, `index.go`, `meta.go`, `footer.go` merged into `internal/sstable/block.go`; `sstable.go` split into `builder.go` (Build) and `merge.go` (Merge)
+- **Dead `main()` moved** — root `main.go` (unreachable in a library package) replaced by `cmd/lsmtree/main.go` (`package main`)
+
 ### Added
-- **Bloom filter per SSTable** — `BloomFilter.Encode()` / `util.DecodeBloomFilter()` added to `util/filter.go` (bit-packed format: k | m | bits). `Build()` constructs a 1%-FPR filter over all entry keys and stores it in `MetaBlock` (`createdAt | level | bloomLen | bloom`). `OpenReader` decodes the filter once at open time; `Reader.Search` checks it as a fast path before touching the index or data blocks, turning most negative lookups into a single in-memory bitset scan.
-- **On-demand data-block reads in `Reader`** (`sstable/reader.go`) — replaced `os.ReadFile` with `os.Open` + `ReadAt`. `OpenReader` reads only the footer, index block, and meta block (bloom); `Search` fetches just the one matching data block; `Entries` streams data blocks one at a time. Added `Reader.Close()`. `LSMTree.Close()` now closes all level readers; `compact()` closes readers before deleting their files, preventing file-descriptor leaks.
-- **Background flush worker** (`tree.go`) — `Put`/`Delete` hold the write lock only for the memtable write + `rotateMemTable` (atomic pointer swap + WAL create). A `flushWorker` goroutine performs Build/write-file/OpenReader outside the lock and re-acquires it briefly to install the result. `Get` searches `t.immutable` between the active memtable and SSTables so reads never miss in-flight data. `Close` stops the worker via a `done` channel, drains any pending job, then flushes the remaining active memtable synchronously.
+- **Bloom filter per SSTable** — `BloomFilter.Encode()` / `bloom.Decode()` in `internal/bloom`. `Build()` constructs a 1%-FPR filter over all entry keys and stores it in `MetaBlock`. `OpenReader` decodes the filter once; `Reader.Search` checks it as a fast path before touching the index or data blocks.
+- **On-demand data-block reads in `Reader`** (`internal/sstable/reader.go`) — `OpenReader` reads only the footer, index block, and meta block (bloom); `Search` fetches just the matching data block; `Entries` streams data blocks one at a time. Added `Reader.Close()`.
+- **Background flush worker** (`lsm.go` / `tree.go`) — `Put`/`Delete` hold the write lock only for the memtable write + `rotateMemTable`. A `flushWorker` goroutine performs Build/write-file/OpenReader outside the lock. `Get` searches `t.immutable` so reads never miss in-flight data.
 
 ### Fixed
 - **Cascading compaction** (`tree.go`) — after each `compact(level)`, the resulting level+1 SSTable is compared against a size limit (`MemTableSize × L0CompactThresh × 10^(level-1)`); if exceeded, `compact(level+1)` is called recursively, propagating data down through all levels instead of letting L1+ grow unboundedly
@@ -14,23 +21,23 @@
 - **`TestLSMTree_CloseFlushesAndClosesWAL`** (`tree_test.go`) — reopens the tree after `Close()` and verifies all data persisted, confirming the rotated WAL is properly closed
 
 ### Fixed
-- **`Close()` WAL file descriptor leak** (`tree.go`) — after `flush()` the active WAL is rotated to a new instance; the original code returned early inside the `if` branch and never called `Close()` on the new WAL. Fixed by splitting the early-return into a two-step `if` so `t.wal.Close()` is always reached.
-- **`sstLevel` fragile `"0"` workaround** (`tree.go`) — `strings.TrimLeft(m[1], "0")` converts `"0"` to `""`, causing `strconv.Atoi` to fail and fall through an error-path that coincidentally returned the correct answer. Replaced with a direct `strconv.Atoi(m[1])` call; the error path now returns `false` instead of silently succeeding.
-- **`Delete` not counted toward `MemTableSize`** (`memtable/memtable.go`) — tombstone entries were never added to `m.size`, so a delete-heavy workload could accumulate entries in memory without ever triggering a flush. Fixed by adding `m.size += int64(len(key) + 1)` in `Delete`.
-- **SSTable not fsynced before WAL deletion** (`tree.go`) — `writeSSTFile` now calls `f.Sync()` before `f.Close()`, ensuring the SSTable bytes reach disk before `oldWAL.Delete()` runs and the WAL is gone.
-- **`SkipList.InsertEntry` stale-read on overwrite** (`util/skiplist.go`) — the previous implementation always inserted a new node at a random level; if the first write for a key landed at level 3 and the second at level 0, a search starting from level 3 would return the old value. Rewritten using the standard `update[]` predecessor array: the key is checked at level 0 (which contains every node) first, and if found the existing node is updated in place; a new node is only allocated for genuinely new keys, eliminating duplicate nodes entirely
+- **`Close()` WAL file descriptor leak** (`lsm.go`) — after `flush()` the active WAL is rotated to a new instance; the original code returned early and never called `Close()` on the new WAL. Fixed so `t.wal.Close()` is always reached.
+- **`sstLevel` fragile `"0"` workaround** (`tree.go`) — `strings.TrimLeft(m[1], "0")` converts `"0"` to `""`, causing `strconv.Atoi` to fail. Replaced with a direct `strconv.Atoi(m[1])` call.
+- **`Delete` not counted toward `MemTableSize`** (`internal/memtable/memtable.go`) — tombstone entries were never added to `m.size`. Fixed by adding `m.size += int64(len(key) + 1)` in `Delete`.
+- **SSTable not fsynced before WAL deletion** (`tree.go`) — `writeSSTFile` now calls `f.Sync()` before `f.Close()`.
+- **`SkipList.InsertEntry` stale-read on overwrite** (`internal/skiplist/skiplist.go`) — rewritten using the standard `update[]` predecessor array; existing nodes are updated in place instead of inserting duplicates.
 
 ---
 
 ### Added
-- **`LSMTree` implementation** (`tree.go`) — `Open`, `Put`, `Get`, `Delete`, `Close` with configurable `Options` (MemTableSize, BlockSize, L0CompactThresh, MaxLevels)
-- **`sstable.Reader`** (`sstable/reader.go`) — loads an SSTable file into memory; exposes `Search(key)` (index → data block lookup) and `Entries()` (full scan for compaction)
-- **`SkipList.InsertEntry`**, **`GetEntry`**, **`Entries`** (`util/skiplist.go`) — full `Entry` support including tombstone flag; `Entries()` deduplicates by key, returning the newest value
-- **`MemTable.GetEntry`**, **`Delete`**, **`Size`**, **`Entries`** (`memtable/memtable.go`) — tombstone-aware deletion, byte-size tracking, and sorted entry export for flushing
+- **`LSMTree` implementation** (`lsm.go`, `tree.go`) — `Open`, `Put`, `Get`, `Delete`, `Close` with configurable `Options` (MemTableSize, BlockSize, L0CompactThresh, MaxLevels)
+- **`sstable.Reader`** (`internal/sstable/reader.go`) — loads an SSTable file into memory; exposes `Search(key)` and `Entries()` (full scan for compaction)
+- **`SkipList.InsertEntry`**, **`GetEntry`**, **`Entries`** (`internal/skiplist/skiplist.go`) — full `Entry` support including tombstone flag; `Entries()` deduplicates by key
+- **`MemTable.GetEntry`**, **`Delete`**, **`Size`**, **`Entries`** (`internal/memtable/memtable.go`) — tombstone-aware deletion, byte-size tracking, and sorted entry export for flushing
 - **Integration tests** (`tree_test.go`) — Put/Get, overwrite, delete, flush-to-SSTable, and compaction with tombstone shadowing
 
 ### Fixed
-- **Pool use-after-free in SSTable encoding** — `DataBlock.Encode`, `IndexBlock.Encode`, `MetaBlock.Encode`, and `Footer.Encode` returned a slice backed by a pooled `bytes.Buffer`. When `Build` called multiple `Encode` functions in sequence, the deferred pool `Put` recycled the backing array before the caller finished with the earlier slice, corrupting SSTable data. Each `Encode` now returns an independent copy.
-- **Tombstone shadowing in `Merge`** (`sstable/sstable.go`) — the merge loop tracked the last emitted key only through the result slice, so a tombstone (which is not appended) did not prevent a lower-priority live entry with the same key from being added. A separate `lastKey` variable now correctly shadows all lower-priority duplicates.
-- **WAL validation rejected tombstone entries** (`wal/wal.go`) — `Write` returned an error for entries with an empty value, making `Delete` impossible. The check now allows empty values when `Tombstone` is true.
-- **`MemTable.Recover` missing directory prefix** (`memtable/memtable.go`) — WAL files were opened by filename only, failing unless the process working directory matched the data directory. Fixed to use `filepath.Join(m.dir, file)`.
+- **Pool use-after-free in SSTable encoding** — `DataBlock.Encode`, `IndexBlock.Encode`, `MetaBlock.Encode`, and `Footer.Encode` returned a slice backed by a pooled `bytes.Buffer`. The deferred pool `Put` recycled the backing array before the caller was done with it. Each `Encode` now returns an independent copy via `bytes.Clone`.
+- **Tombstone shadowing in `Merge`** (`internal/sstable/merge.go`) — a separate `lastKey` variable now correctly shadows all lower-priority duplicates, including tombstones.
+- **WAL validation rejected tombstone entries** (`internal/wal/wal.go`) — `Write` returned an error for entries with an empty value. The check now allows empty values when `Tombstone` is true.
+- **`MemTable.Recover` missing directory prefix** (`internal/memtable/memtable.go`) — WAL files were opened by filename only. Fixed to use `filepath.Join(m.dir, file)`.

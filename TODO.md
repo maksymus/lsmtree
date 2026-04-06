@@ -47,22 +47,21 @@ toward the flush threshold and delete-heavy workloads still trigger flushes.
 
 ### ~~Bloom filters exist but are unused~~ ✅
 
-Added `BloomFilter.Encode()` and `util.DecodeBloomFilter()`. `Build()` now creates a
-filter at 1% FPR, adds every entry key, and stores the serialized bytes in `MetaBlock`
-(format: `createdAt | level | bloomLen | bloom bits`). `OpenReader` decodes the filter
-once and caches it in `Reader.bloom`. `Search` checks the filter first and returns
-`nil, false` immediately for any key that is definitely absent, skipping the index and
-data block entirely.
+Added `BloomFilter.Encode()` and `bloom.Decode()` in `internal/bloom`. `Build()` now
+creates a filter at 1% FPR, adds every entry key, and stores the serialized bytes in
+`MetaBlock` (format: `createdAt | level | bloomLen | bloom bits`). `OpenReader` decodes
+the filter once and caches it in `Reader.bloom`. `Search` checks the filter first and
+returns `nil, false` immediately for any key that is definitely absent.
 
 ---
 
 ### ~~`Reader` loads the entire SSTable into memory~~ ✅
 
-`Reader` now holds an `*os.File` instead of `[]byte`. `OpenReader` reads only the
-footer (32 bytes via `ReadAt`), index block, and meta block (for the bloom filter)
-at open time. `Search` fetches only the matching data block on demand; `Entries`
-fetches each data block in turn. Added `Reader.Close()`. `LSMTree.Close()` closes
-all level readers; `compact()` closes readers before deleting their files.
+`internal/sstable.Reader` holds an `*os.File` instead of `[]byte`. `OpenReader` reads
+only the footer (32 bytes via `ReadAt`), index block, and meta block at open time.
+`Search` fetches only the matching data block on demand; `Entries` fetches each data
+block in turn. Added `Reader.Close()`. `LSMTree.Close()` closes all level readers;
+`compact()` closes readers before deleting their files.
 
 ---
 
@@ -84,17 +83,18 @@ synchronously before returning.
 
 Add a merged iterator over the MemTable and all SSTable levels. The SkipList level-0
 list supports ordered traversal; SSTable data blocks are already sorted. A k-way merge
-using `util.Heap` (already used in `sstable.Merge`) exposes full ordered scan.
+using `internal/heap.Heap` (already used in `internal/sstable.Merge`) exposes full
+ordered scan.
 
 ```go
 // iterator.go
 type Iterator struct {
-    heap *util.Heap[iterItem]
+    heap *heap.Heap[iterItem]
 }
 
 type iterItem struct {
-    entry     *util.Entry
-    advance   func() (*util.Entry, bool) // next() for this source
+    entry     *entry.Entry
+    advance   func() (*entry.Entry, bool) // next() for this source
 }
 
 func (t *LSMTree) Scan(start, end []byte) *Iterator {
@@ -102,7 +102,7 @@ func (t *LSMTree) Scan(start, end []byte) *Iterator {
     // heap orders by key; equal keys resolved newest-source-first (same as Merge)
 }
 
-func (it *Iterator) Next() (*util.Entry, bool) {
+func (it *Iterator) Next() (*entry.Entry, bool) {
     if it.heap.Len() == 0 {
         return nil, false
     }
