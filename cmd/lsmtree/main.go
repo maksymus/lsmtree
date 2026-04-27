@@ -1,13 +1,15 @@
 package main
 
 import (
+	"bufio"
 	"flag"
 	"fmt"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 
 	lmstree "github.com/maksymus/lmstree"
-	"github.com/peterh/liner"
 )
 
 func main() {
@@ -21,22 +23,27 @@ func main() {
 	}
 	defer tree.Close()
 
-	line := liner.NewLiner()
-	defer line.Close()
-	line.SetCtrlCAborts(true)
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		<-sigCh
+		fmt.Println("\nbye")
+		tree.Close()
+		os.Exit(0)
+	}()
 
 	fmt.Println("lsmtree — type 'help' for commands")
 
+	scanner := bufio.NewScanner(os.Stdin)
 	for {
-		input, err := line.Prompt("> ")
-		if err != nil { // EOF or Ctrl-C
+		fmt.Print("> ")
+		if !scanner.Scan() {
 			break
 		}
-		input = strings.TrimSpace(input)
+		input := strings.TrimSpace(scanner.Text())
 		if input == "" {
 			continue
 		}
-		line.AppendHistory(input)
 
 		parts := strings.SplitN(input, " ", 3)
 		switch strings.ToLower(parts[0]) {
