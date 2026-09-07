@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/maksymus/lmstree/entry"
@@ -16,11 +17,39 @@ import (
 	walPkg "github.com/maksymus/lmstree/internal/wal"
 )
 
-// sstableFile is an in-memory handle for one SSTable file on disk.
+// sstableFile is a reference-counted handle for one SSTable file on disk.
+// The tree holds one reference while the file is live in t.levels; each open
+// Iterator holds one more. The reader is closed — and the file removed, if
+// compaction marked it obsolete — only when the last reference is released.
 type sstableFile struct {
-	path   string
-	level  int
-	reader *sstable.Reader
+	path     string
+	level    int
+	reader   *sstable.Reader
+	refs     atomic.Int32
+	obsolete atomic.Bool
+}
+
+// newSSTableFile returns a handle owning one reference, held by the tree.
+func newSSTableFile(path string, level int, reader *sstable.Reader) *sstableFile {
+	s := &sstableFile{path: path, level: level, reader: reader}
+	s.refs.Store(1)
+	return s
+}
+
+// acquire takes an additional reference. Callers must hold t.mu so the handle
+// cannot be released out from under them.
+func (s *sstableFile) acquire() { s.refs.Add(1) }
+
+// release drops one reference, closing the reader and deleting an obsolete
+// file once the count reaches zero.
+func (s *sstableFile) release() {
+	if s.refs.Add(-1) != 0 {
+		return
+	}
+	s.reader.Close()
+	if s.obsolete.Load() {
+		os.Remove(s.path)
+	}
 }
 
 // flushJob carries a frozen MemTable and its WAL to the background flush worker.
@@ -43,8 +72,8 @@ type LSMTree struct {
 	immutable *memtable.MemTable // frozen; being flushed by flushWorker
 	wal       *walPkg.WAL        // current active WAL
 	levels    [][]*sstableFile   // levels[i] = SSTables at level i, newest first
-	flushCh   chan flushJob       // capacity 1; at most one flush in flight at a time
-	done      chan struct{}       // closed by Close() to stop the worker
+	flushCh   chan flushJob      // capacity 1; at most one flush in flight at a time
+	done      chan struct{}      // closed by Close() to stop the worker
 	wg        sync.WaitGroup     // tracks the flush worker goroutine
 }
 
@@ -113,7 +142,7 @@ func (t *LSMTree) processFlush(job flushJob) {
 	}
 
 	t.mu.Lock()
-	t.levels[0] = append([]*sstableFile{{path: path, level: 0, reader: reader}}, t.levels[0]...)
+	t.levels[0] = append([]*sstableFile{newSSTableFile(path, 0, reader)}, t.levels[0]...)
 	t.immutable = nil
 	if len(t.levels[0]) >= t.opts.L0CompactThresh {
 		_ = t.compact(0)
@@ -145,7 +174,7 @@ func (t *LSMTree) flush() error {
 		return err
 	}
 
-	t.levels[0] = append([]*sstableFile{{path: path, level: 0, reader: reader}}, t.levels[0]...)
+	t.levels[0] = append([]*sstableFile{newSSTableFile(path, 0, reader)}, t.levels[0]...)
 
 	oldWAL := t.wal
 	newWAL, err := walPkg.Create(t.opts.Dir)
@@ -215,12 +244,12 @@ func (t *LSMTree) compact(level int) error {
 		if err != nil {
 			return err
 		}
-		t.levels[level+1] = []*sstableFile{{path: path, level: level + 1, reader: reader}}
+		t.levels[level+1] = []*sstableFile{newSSTableFile(path, level+1, reader)}
 	}
 
 	for _, sst := range toDelete {
-		sst.reader.Close()
-		os.Remove(sst.path)
+		sst.obsolete.Store(true)
+		sst.release()
 	}
 
 	// Cascade: compact level+1 if it now exceeds its size budget.
@@ -295,7 +324,7 @@ func (t *LSMTree) loadSSTables() error {
 		if err != nil {
 			return err
 		}
-		t.levels[level] = append(t.levels[level], &sstableFile{path: path, level: level, reader: reader})
+		t.levels[level] = append(t.levels[level], newSSTableFile(path, level, reader))
 	}
 
 	for i := range t.levels {

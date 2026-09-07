@@ -78,10 +78,35 @@ func main() {
 			} else {
 				fmt.Println("ok")
 			}
+		case "scan":
+			// "-" stands in for an unbounded side: `scan - m` is everything below "m".
+			var start, end []byte
+			if len(parts) > 1 && parts[1] != "-" {
+				start = []byte(parts[1])
+			}
+			if len(parts) > 2 && parts[2] != "-" {
+				end = []byte(parts[2])
+			}
+			it := tree.Scan(start, end)
+			count := 0
+			for {
+				e, ok := it.Next()
+				if !ok {
+					break
+				}
+				fmt.Printf("%s = %s\n", e.Key, e.Value)
+				count++
+			}
+			if err := it.Err(); err != nil {
+				fmt.Fprintln(os.Stderr, "error:", err)
+			}
+			it.Close()
+			fmt.Printf("(%d entries)\n", count)
 		case "help":
 			fmt.Println("  put <key> <value>   store a key-value pair")
 			fmt.Println("  get <key>           retrieve a value")
 			fmt.Println("  delete <key>        delete a key")
+			fmt.Println("  scan [start] [end]  list entries in [start, end); - means unbounded")
 			fmt.Println("  exit                quit")
 		case "exit", "quit":
 			return

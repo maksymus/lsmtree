@@ -82,12 +82,8 @@ func (r *Reader) Search(key []byte) (*entry.Entry, bool) {
 		return nil, false
 	}
 
-	buf := make([]byte, block.length)
-	if _, err := r.f.ReadAt(buf, int64(block.offset)); err != nil {
-		return nil, false
-	}
-	dataBlock := &DataBlock{}
-	if err := dataBlock.Decode(buf); err != nil {
+	dataBlock, err := r.readDataBlock(block)
+	if err != nil {
 		return nil, false
 	}
 	return dataBlock.Search(key)
@@ -97,17 +93,26 @@ func (r *Reader) Search(key []byte) (*entry.Entry, bool) {
 func (r *Reader) Entries() ([]*entry.Entry, error) {
 	var entries []*entry.Entry
 	for _, ie := range r.index.entries {
-		buf := make([]byte, ie.block.length)
-		if _, err := r.f.ReadAt(buf, int64(ie.block.offset)); err != nil {
-			return nil, err
-		}
-		dataBlock := &DataBlock{}
-		if err := dataBlock.Decode(buf); err != nil {
+		dataBlock, err := r.readDataBlock(ie.block)
+		if err != nil {
 			return nil, err
 		}
 		entries = append(entries, dataBlock.entries...)
 	}
 	return entries, nil
+}
+
+// readDataBlock reads and decodes a single data block from the file.
+func (r *Reader) readDataBlock(block Block) (*DataBlock, error) {
+	buf := make([]byte, block.length)
+	if _, err := r.f.ReadAt(buf, int64(block.offset)); err != nil {
+		return nil, err
+	}
+	dataBlock := &DataBlock{}
+	if err := dataBlock.Decode(buf); err != nil {
+		return nil, err
+	}
+	return dataBlock, nil
 }
 
 // Close releases the underlying file descriptor.

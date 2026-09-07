@@ -152,7 +152,7 @@ func (t *LSMTree) Close() error {
 
 	for _, level := range t.levels {
 		for _, sst := range level {
-			sst.reader.Close()
+			sst.release()
 		}
 	}
 	return t.wal.Close()

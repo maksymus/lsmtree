@@ -79,43 +79,31 @@ synchronously before returning.
 
 ## Missing Functionality
 
-### No range scan / iterator
+### ~~No range scan / iterator~~ ✅
 
-Add a merged iterator over the MemTable and all SSTable levels. The SkipList level-0
-list supports ordered traversal; SSTable data blocks are already sorted. A k-way merge
-using `internal/heap.Heap` (already used in `internal/sstable.Merge`) exposes full
-ordered scan.
+Implemented across three layers:
 
-```go
-// iterator.go
-type Iterator struct {
-    heap *heap.Heap[iterItem]
-}
+- `SkipList.Range(start, end)` / `MemTable.Range(start, end)` — snapshot of the
+  entries in `[start, end)` in sorted order, tombstones included. Taken under the
+  MemTable mutex so a concurrent writer cannot corrupt the walk.
+- `internal/sstable.Reader.Iterator(start, end)` — ordered scan of one SSTable that
+  fetches a single data block at a time. Index entries whose range falls entirely
+  outside the bounds are skipped without any read.
+- `LSMTree.Scan(start, end)` (`iterator.go`) — k-way merge via `internal/heap` over
+  the MemTable, the immutable MemTable, and every SSTable level. Sources are seeded
+  newest-first (same order as `Get`); ties on a key go to the lowest priority index,
+  and every shadowed copy plus every tombstoned key is dropped.
 
-type iterItem struct {
-    entry     *entry.Entry
-    advance   func() (*entry.Entry, bool) // next() for this source
-}
+A `nil` bound is unbounded, so `Scan(nil, nil)` walks the whole tree. `Next` returns
+`(*entry.Entry, bool)`, `Err` reports the first read failure, and `Close` must be
+called to unpin SSTables.
 
-func (t *LSMTree) Scan(start, end []byte) *Iterator {
-    // seed one iterItem per source: memtable, each L0 SST, each L1+ SST
-    // heap orders by key; equal keys resolved newest-source-first (same as Merge)
-}
+To keep a live iterator safe against a concurrent compaction, `sstableFile` became
+reference-counted: the tree holds one reference while the file is in `t.levels`, each
+iterator holds one more, and `compact` marks superseded files obsolete and releases
+them rather than closing and unlinking outright. The last release does the cleanup.
 
-func (it *Iterator) Next() (*entry.Entry, bool) {
-    if it.heap.Len() == 0 {
-        return nil, false
-    }
-    item, _ := it.heap.Pop()
-    if next, ok := item.advance(); ok {
-        it.heap.Push(iterItem{entry: next, advance: item.advance})
-    }
-    if item.entry.Tombstone {
-        return it.Next() // skip tombstones
-    }
-    return item.entry, true
-}
-```
+Also added a `scan [start] [end]` REPL command (`-` for an unbounded side).
 
 ---
 

@@ -10,6 +10,7 @@ A Go implementation of a Log-Structured Merge Tree (LSM Tree) for persistent key
 - **Background flush worker** — `Put`/`Delete` hold the write lock only for the in-memory write; heavy I/O runs concurrently
 - **Write-Ahead Log** — crash recovery by replaying WAL files on `Open`
 - **Tombstone-aware delete** — deletions shadow older values through compaction
+- **Range scan** — `Scan(start, end)` merges the MemTable and every SSTable level into one ordered iterator
 
 ## Usage
 
@@ -27,6 +28,29 @@ tree.Put([]byte("hello"), []byte("world"))
 val, ok := tree.Get([]byte("hello"))
 
 tree.Delete([]byte("hello"))
+```
+
+### Range scan
+
+`Scan` returns an iterator over all live keys in `[start, end)` in ascending
+order. A `nil` bound is unbounded on that side, so `Scan(nil, nil)` walks the
+whole tree. The iterator sees a snapshot taken at `Scan` time and pins the
+SSTables it reads, so it must be closed.
+
+```go
+it := tree.Scan([]byte("a"), []byte("m"))
+defer it.Close()
+
+for {
+    e, ok := it.Next()
+    if !ok {
+        break
+    }
+    fmt.Printf("%s = %s\n", e.Key, e.Value)
+}
+if err := it.Err(); err != nil {
+    log.Fatal(err)
+}
 ```
 
 ### Options
@@ -60,6 +84,7 @@ lsmtree/
 ├── options.go              # Options, DefaultOptions
 ├── lsm.go                  # Open, Put, Get, Delete, Close
 ├── tree.go                 # LSMTree struct + private methods
+├── iterator.go             # Scan() — merged ordered iterator
 ├── entry/                  # Entry{Key, Value, Tombstone} — zero deps
 ├── cmd/lsmtree/            # demo CLI (package main)
 └── internal/
@@ -72,7 +97,8 @@ lsmtree/
     │   ├── block.go        # DataBlock, IndexBlock, MetaBlock, Footer
     │   ├── builder.go      # Build() — constructs SSTable bytes
     │   ├── merge.go        # Merge() — k-way merge, last-write-wins
-    │   └── reader.go       # Reader — on-demand block reads
+    │   ├── reader.go       # Reader — on-demand block reads
+    │   └── iterator.go     # Iterator — block-at-a-time range scan
     └── wal/                # Write-Ahead Log + NoopWAL
 ```
 

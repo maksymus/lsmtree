@@ -161,3 +161,11 @@ func (m *MemTable) Recover() error {
 
 	return nil
 }
+
+// Range returns a snapshot of entries with start <= key < end in sorted key
+// order, including tombstones. A nil start or end is unbounded on that side.
+func (m *MemTable) Range(start, end []byte) []*entry.Entry {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+	return m.list.Range(start, end)
+}

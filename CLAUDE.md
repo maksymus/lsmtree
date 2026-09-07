@@ -31,10 +31,11 @@ Disk:    WAL | Level 0 SSTables
 
 ### Packages
 
-- **Root package (`lmstree`)** — public API split across three files:
+- **Root package (`lmstree`)** — public API split across four files:
   - `options.go` — `Options`, `DefaultOptions`, shared constants
   - `lsm.go` — `Open`, `Put`, `Get`, `Delete`, `Close`
   - `tree.go` — `LSMTree` struct, internal types (`sstableFile`, `flushJob`), and all private methods (flush, compact, loadSSTables, etc.)
+  - `iterator.go` — `Scan(start, end)` / `Iterator`: k-way merge over the MemTable, the immutable MemTable, and every SSTable level
 
 - **`entry/`** — `Entry` struct (Key, Value, Tombstone + Size()). Zero internal dependencies; importable by any package including external consumers.
 
@@ -42,7 +43,7 @@ Disk:    WAL | Level 0 SSTables
 
 - **`internal/bloom/`** — `BloomFilter` with murmur3 hashing, `Encode()` / `Decode()` for serialization into SSTable MetaBlock.
 
-- **`internal/heap/`** — Generic `Heap[T]` wrapping `container/heap`; used for k-way merge in SSTable and (future) iterators.
+- **`internal/heap/`** — Generic `Heap[T]` wrapping `container/heap`; used for the k-way merge in `internal/sstable.Merge` and in the root `Scan` iterator.
 
 - **`internal/pool/`** — `SyncPool[T]` / `BytesBufferPool` — object pooling to reduce allocations in hot paths (SSTable building, WAL writes).
 
@@ -55,6 +56,7 @@ Disk:    WAL | Level 0 SSTables
   - `builder.go` — `Build()`: constructs SSTable bytes from entries, splits into DataBlocks by size, embeds bloom filter in MetaBlock
   - `merge.go` — `Merge()`: k-way merge via `internal/heap`; last-write-wins for duplicates, drops tombstones
   - `reader.go` — `Reader`: opens file once (footer + index + bloom), fetches data blocks on demand via `ReadAt`
+  - `iterator.go` — `Reader.Iterator(start, end)`: ordered range scan that fetches one data block at a time
 
 - **`internal/wal/`** — Write-Ahead Log:
   - WAL files named `wal-{timestamp}-{nanoseconds}.log` with version-based ordering
@@ -67,6 +69,7 @@ Disk:    WAL | Level 0 SSTables
 - **Binary encoding**: All blocks use `encoding/binary.BigEndian`. Every block type implements `Encode() ([]byte, error)` and `Decode([]byte) error`. `Encode` returns `bytes.Clone(buffer.Bytes())` to avoid pool use-after-free.
 - **Buffer pooling**: `BytesBufferPool` (via `SyncPool`) is used in SSTable building and WAL writes to reduce GC pressure.
 - **Concurrency**: `LSMTree` uses `sync.RWMutex`; MemTable and WAL use `sync.Mutex`. Background flush worker communicates via a buffered channel (`flushCh`, capacity 1).
+- **SSTable refcounting**: `sstableFile` is reference-counted (`acquire`/`release`). The tree holds one reference while a file is live in `t.levels`; each open `Iterator` holds one more. Compaction marks superseded files `obsolete` and releases them — the reader is closed and the file unlinked only when the last reference drops, so an in-flight scan is never cut off.
 - **Background flush**: `Put`/`Delete` hold the write lock only for the memtable write + `rotateMemTable`. The `flushWorker` goroutine does all I/O without the lock.
 - **Generics**: `Heap[T]` and `SyncPool[T]` use Go generics.
 - **Testing**: Table-driven tests, concurrent access tests, `InMemoryWalFile` mock, separate `_bench_test.go` files with `b.ReportAllocs()`.

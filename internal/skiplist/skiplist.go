@@ -230,3 +230,29 @@ func (sl *SkipList) LowerBound(key []byte) ([]byte, bool) {
 	var zeroValue []byte
 	return zeroValue, false
 }
+
+// Range returns entries with start <= key < end in sorted order, deduplicated.
+// A nil start begins at the first key; a nil end runs past the last.
+func (sl *SkipList) Range(start, end []byte) []*entry.Entry {
+	current := sl.head
+	if start != nil {
+		for i := sl.currentLevel; i >= 0; i-- {
+			for current.forward[i] != nil && bytes.Compare(current.forward[i].Key, start) < 0 {
+				current = current.forward[i]
+			}
+		}
+	}
+
+	result := make([]*entry.Entry, 0)
+	for node := current.forward[0]; node != nil; node = node.forward[0] {
+		if end != nil && bytes.Compare(node.Key, end) >= 0 {
+			break
+		}
+		if len(result) > 0 && bytes.Equal(node.Key, result[len(result)-1].Key) {
+			continue
+		}
+		e := node.Entry
+		result = append(result, &e)
+	}
+	return result
+}

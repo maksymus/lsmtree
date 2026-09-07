@@ -10,6 +10,11 @@
 - **Dead `main()` moved** — root `main.go` (unreachable in a library package) replaced by `cmd/lsmtree/main.go` (`package main`)
 
 ### Added
+- **Range scan / iterator** — `LSMTree.Scan(start, end)` (`iterator.go`) returns an `Iterator` that k-way merges the MemTable, the immutable MemTable, and every SSTable level into one ascending key order. Duplicate keys resolve newest-first and tombstoned keys are dropped. A `nil` bound is unbounded, so `Scan(nil, nil)` walks the whole tree. `Next` / `Err` / `Close`.
+- **`internal/sstable.Reader.Iterator(start, end)`** (`internal/sstable/iterator.go`) — ordered scan of a single SSTable that fetches one data block at a time; index entries outside the bounds are skipped without a read.
+- **`SkipList.Range` / `MemTable.Range`** — sorted snapshot of the entries in `[start, end)`, tombstones included.
+- **Reference-counted `sstableFile`** (`tree.go`) — the tree holds one reference while a file is live in `t.levels`, each open `Iterator` holds one more. `compact` marks superseded files obsolete and releases them instead of closing and unlinking outright, so a scan in flight is never cut off; the last release closes the reader and removes the file.
+- **`scan [start] [end]` REPL command** (`cmd/lsmtree/main.go`) — `-` stands in for an unbounded side.
 - **Bloom filter per SSTable** — `BloomFilter.Encode()` / `bloom.Decode()` in `internal/bloom`. `Build()` constructs a 1%-FPR filter over all entry keys and stores it in `MetaBlock`. `OpenReader` decodes the filter once; `Reader.Search` checks it as a fast path before touching the index or data blocks.
 - **On-demand data-block reads in `Reader`** (`internal/sstable/reader.go`) — `OpenReader` reads only the footer, index block, and meta block (bloom); `Search` fetches just the matching data block; `Entries` streams data blocks one at a time. Added `Reader.Close()`.
 - **Background flush worker** (`lsm.go` / `tree.go`) — `Put`/`Delete` hold the write lock only for the memtable write + `rotateMemTable`. A `flushWorker` goroutine performs Build/write-file/OpenReader outside the lock. `Get` searches `t.immutable` so reads never miss in-flight data.

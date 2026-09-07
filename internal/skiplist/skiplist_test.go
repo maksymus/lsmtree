@@ -6,6 +6,8 @@ import (
 	"math/rand"
 	"testing"
 	"time"
+
+	"github.com/maksymus/lmstree/entry"
 )
 
 func TestSkipList_Insert(t *testing.T) {
@@ -175,5 +177,55 @@ func TestSkipList_LowerBound_Empty(t *testing.T) {
 	_, found := list.LowerBound([]byte("a"))
 	if found {
 		t.Error("expected LowerBound on empty list to return false")
+	}
+}
+
+func TestSkipList_Range(t *testing.T) {
+	sl := NewSkipList(8, rand.New(rand.NewSource(1)))
+	for _, k := range []string{"a", "b", "c", "d", "e"} {
+		sl.InsertEntry(&entry.Entry{Key: []byte(k), Value: []byte(k)})
+	}
+
+	tests := []struct {
+		name       string
+		start, end []byte
+		want       []string
+	}{
+		{"full", nil, nil, []string{"a", "b", "c", "d", "e"}},
+		{"bounded", []byte("b"), []byte("d"), []string{"b", "c"}},
+		{"start only", []byte("d"), nil, []string{"d", "e"}},
+		{"end only", nil, []byte("c"), []string{"a", "b"}},
+		{"between keys", []byte("bb"), []byte("dd"), []string{"c", "d"}},
+		{"empty range", []byte("c"), []byte("c"), nil},
+		{"past end", []byte("z"), nil, nil},
+		{"inverted", []byte("d"), []byte("b"), nil},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := sl.Range(tc.start, tc.end)
+			if len(got) != len(tc.want) {
+				t.Fatalf("Range: got %d entries, want %d", len(got), len(tc.want))
+			}
+			for i, e := range got {
+				if string(e.Key) != tc.want[i] {
+					t.Fatalf("Range[%d]: got %q, want %q", i, e.Key, tc.want[i])
+				}
+			}
+		})
+	}
+}
+
+func TestSkipList_RangeIncludesTombstones(t *testing.T) {
+	sl := NewSkipList(8, rand.New(rand.NewSource(2)))
+	sl.InsertEntry(&entry.Entry{Key: []byte("a"), Value: []byte("1")})
+	sl.InsertEntry(&entry.Entry{Key: []byte("b"), Value: []byte{}, Tombstone: true})
+
+	got := sl.Range(nil, nil)
+	if len(got) != 2 {
+		t.Fatalf("Range: got %d entries, want 2", len(got))
+	}
+	if !got[1].Tombstone {
+		t.Fatal("Range: tombstone for 'b' was not preserved")
 	}
 }
