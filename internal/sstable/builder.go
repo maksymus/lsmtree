@@ -1,6 +1,7 @@
 package sstable
 
 import (
+	"bytes"
 	"errors"
 	"time"
 
@@ -28,9 +29,6 @@ SSTable on-disk format:
 
 // Build constructs SSTable bytes from the given entries, block size, and level.
 func Build(entries []*entry.Entry, blockSize int, level int) ([]byte, error) {
-	sstableBuffer := bytesBufPool.Get()
-	defer bytesBufPool.Put(sstableBuffer)
-
 	// Split entries into data blocks.
 	var dataBlocks []*DataBlock
 	currentBlock := &DataBlock{}
@@ -49,6 +47,13 @@ func Build(entries []*entry.Entry, blockSize int, level int) ([]byte, error) {
 	if len(currentBlock.entries) > 0 {
 		dataBlocks = append(dataBlocks, currentBlock)
 	}
+
+	// Unlike the block Encode methods, this buffer holds the whole SSTable and
+	// its contents escape to the caller, so it is deliberately not pooled: the
+	// deferred Put would recycle it while the caller still held a slice into
+	// it, and the next Get would hand that same array to someone else. Sizing
+	// it up front avoids the regrow-and-copy that a plain buffer pays instead.
+	sstableBuffer := bytes.NewBuffer(make([]byte, 0, estimateSize(entries, dataBlocks)))
 
 	// Write data blocks and build index.
 	indexBlock := &IndexBlock{}
@@ -113,4 +118,29 @@ func Build(entries []*entry.Entry, blockSize int, level int) ([]byte, error) {
 	}
 
 	return sstableBuffer.Bytes(), nil
+}
+
+// Encoding overheads used to size the build buffer.
+const (
+	dataEntryHeaderSize = 8  // key length + value length, uint32 each
+	indexEntryOverhead  = 24 // two key lengths (uint32) + block offset/length (uint64)
+	metaBlockHeaderSize = 16 // createdAt (int64) + level (int32) + bloom length (uint32)
+	bloomBytesPerKey    = 2  // a 1%-FPR filter needs ~9.6 bits per key; round up
+)
+
+// estimateSize approximates the encoded size of the SSTable these entries will
+// produce, so the build buffer can be allocated once. It deliberately
+// overshoots: a little slack is far cheaper than regrowing and copying a
+// multi-megabyte buffer.
+func estimateSize(entries []*entry.Entry, dataBlocks []*DataBlock) int {
+	size := footerSize + metaBlockHeaderSize + bloomBytesPerKey*len(entries) + 64
+
+	for _, e := range entries {
+		size += e.Size() + dataEntryHeaderSize
+	}
+	for _, db := range dataBlocks {
+		first, last := db.entries[0], db.entries[len(db.entries)-1]
+		size += len(first.Key) + len(last.Key) + indexEntryOverhead
+	}
+	return size
 }
